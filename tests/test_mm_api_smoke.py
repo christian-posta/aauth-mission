@@ -75,6 +75,74 @@ def test_token_defer_consent_flow(client: TestClient) -> None:
     assert "auth_token" in body and "expires_in" in body
 
 
+def test_admin_pending_lists_open_token(client: TestClient) -> None:
+    r = client.post(
+        "/token",
+        json={"resource_token": "jwt"},
+        headers={"X-AAuth-Agent-Id": "agent-1"},
+    )
+    assert r.status_code == 202
+    pending_id = r.headers["Location"].strip("/").split("/")[-1]
+    r2 = client.get("/admin/pending")
+    assert r2.status_code == 200
+    rows = r2.json()
+    assert len(rows) == 1
+    assert rows[0]["pending_id"] == pending_id
+    assert rows[0]["kind"] == "token"
+    assert rows[0]["agent_id"] == "agent-1"
+    assert rows[0]["requirement"] == "interaction"
+    assert rows[0]["code"]
+
+
+def test_user_api_not_configured(client: TestClient) -> None:
+    r = client.get("/user/missions", headers={"Authorization": "Bearer x"})
+    assert r.status_code == 503
+
+
+def test_user_missions_owner_and_consent(client: TestClient) -> None:
+    app = create_app(
+        MMHttpSettings(
+            insecure_dev=True,
+            public_origin="http://test.example",
+            auto_approve_token=False,
+            user_token="user-secret",
+            user_id="alice",
+        )
+    )
+    c = TestClient(app)
+    r = c.post(
+        "/mission",
+        json={"mission_proposal": "# Owned\n\nMission text.", "owner_hint": "alice"},
+        headers={"X-AAuth-Agent-Id": "agent-owned"},
+    )
+    assert r.status_code == 200
+    s256 = r.json()["mission"]["s256"]
+
+    r_list = c.get("/user/missions", headers={"Authorization": "Bearer user-secret"})
+    assert r_list.status_code == 200
+    rows = r_list.json()
+    assert len(rows) == 1
+    assert rows[0]["s256"] == s256
+    assert rows[0]["owner_id"] == "alice"
+
+    r_tok = c.post(
+        "/token",
+        json={"resource_token": "jwt"},
+        headers={"X-AAuth-Agent-Id": "agent-owned"},
+    )
+    assert r_tok.status_code == 202
+    req_hdr = r_tok.headers.get("AAuth-Requirement", "")
+    m = re.search(r'code="([^"]+)"', req_hdr)
+    assert m is not None
+    code = m.group(1)
+
+    r_cq = c.get("/user/consent", headers={"Authorization": "Bearer user-secret"})
+    assert r_cq.status_code == 200
+    queue = r_cq.json()
+    assert len(queue) == 1
+    assert queue[0]["code"] == code
+
+
 def test_pending_gone_after_delete(client: TestClient) -> None:
     r = client.post(
         "/token",

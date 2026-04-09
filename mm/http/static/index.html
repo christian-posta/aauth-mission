@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AAuth Mission Manager — Sign in</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+  </head>
+  <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+    <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4" x-data="loginForm()">
+      <div class="mb-8 text-center">
+        <h1 class="text-2xl font-semibold tracking-tight text-white">AAuth Mission Manager</h1>
+        <p class="mt-2 text-sm text-zinc-400">Enter your bearer token (legal user or admin).</p>
+      </div>
+      <form @submit.prevent="submit" class="rounded-xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-xl">
+        <label class="block text-sm font-medium text-zinc-300">Token</label>
+        <input
+          type="password"
+          x-model="token"
+          autocomplete="off"
+          class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          placeholder="Paste bearer token (optional if admin has no token set)"
+        />
+        <p x-show="error" x-text="error" class="mt-3 text-sm text-red-400"></p>
+        <button
+          type="submit"
+          :disabled="loading"
+          class="mt-4 w-full rounded-lg bg-sky-600 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+        >
+          <span x-show="!loading">Sign in</span>
+          <span x-show="loading">Signing in…</span>
+        </button>
+      </form>
+      <p class="mt-6 text-center text-xs text-zinc-500">OpenAPI docs: <a class="text-sky-400 hover:underline" href="/docs">/docs</a></p>
+    </div>
+    <script>
+      function loginForm() {
+        return {
+          token: "",
+          error: "",
+          loading: false,
+          async submit() {
+            this.error = "";
+            this.loading = true;
+            try {
+              var headers = {};
+              var t = this.token.trim();
+              if (t) headers["Authorization"] = "Bearer " + t;
+
+              var ru = await fetch("/user/missions", { headers: headers });
+              if (ru.ok) {
+                AAuthAuth.setSession(t, "user");
+                location.href = "user.html";
+                return;
+              }
+              if (ru.status !== 503 && ru.status !== 401 && ru.status !== 403) {
+                this.error = "User API error (" + ru.status + ").";
+                return;
+              }
+              var ra = await fetch("/missions", { headers: headers });
+              if (ra.ok) {
+                AAuthAuth.setSession(t, "admin");
+                location.href = "admin.html";
+                return;
+              }
+              this.error = "Could not sign in. Check tokens or server configuration.";
+            } catch (e) {
+              this.error = e.message || String(e);
+            } finally {
+              this.loading = false;
+            }
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

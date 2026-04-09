@@ -50,3 +50,21 @@ def require_admin(
     got = authorization.removeprefix("Bearer ").strip()
     if got != expected:
         raise HTTPException(status_code=403, detail="Invalid admin token")
+
+
+def require_user(
+    settings: Annotated[MMHttpSettings, Depends(get_settings)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> str:
+    expected = settings.user_token
+    if expected is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Legal user API not configured (set AAUTH_MM_USER_TOKEN)",
+        )
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization: Bearer required")
+    got = authorization.removeprefix("Bearer ").strip()
+    if got != expected:
+        raise HTTPException(status_code=403, detail="Invalid user token")
+    return settings.user_id

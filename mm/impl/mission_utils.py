@@ -24,4 +24,5 @@ def mission_from_proposal(proposal: MissionProposal, refined_text: str | None = 
         state=MissionState.ACTIVE,
         agent_id=proposal.agent_id,
         created_at=utc_now(),
+        owner_id=proposal.owner_hint,
     )

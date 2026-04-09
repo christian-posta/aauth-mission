@@ -18,3 +18,9 @@ class NotFoundError(Exception):
     """Unknown mission or pending id; HTTP 404."""
 
     pass
+
+
+class ForbiddenOwnerError(Exception):
+    """Mission not owned by the authenticated legal user; HTTP 403."""
+
+    pass

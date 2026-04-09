@@ -24,6 +24,7 @@ class PendingRecord:
     kind: Literal["token", "mission"]
     token_request: TokenRequest | None = None
     mission_proposal: MissionProposal | None = None
+    owner_id: str | None = None
     status: PendingStatus = PendingStatus.PENDING
     requirement: RequirementLevel | None = None
     clarification: str | None = None

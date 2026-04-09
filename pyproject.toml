@@ -5,11 +5,15 @@ description = "AAuth Mission Manager reference API (in-memory) per draft-hardt-a
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aiofiles>=23.2.0",
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
 ]
+
+[tool.setuptools.package-data]
+"mm" = ["http/static/**/*"]
 
 [project.optional-dependencies]
 dev = ["httpx>=0.26.0", "pytest>=8.0.0"]

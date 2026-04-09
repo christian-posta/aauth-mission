@@ -15,6 +15,10 @@ class MissionControl(ABC):
         """Filter missions by agent and/or state."""
 
     @abstractmethod
+    def list_missions_for_owner(self, owner_id: str) -> list[Mission]:
+        """Missions whose owner_id matches (legal user scope)."""
+
+    @abstractmethod
     def inspect_mission(self, s256: str) -> Mission:
         """Detail view including delegation/audit (implementation-defined)."""
 

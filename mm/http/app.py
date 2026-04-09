@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 from mm.api.agent_routes import (
@@ -19,10 +21,16 @@ from mm.api.agent_routes import (
 )
 from mm.api.admin_routes import get_mission_route, list_missions_route, patch_mission
 from mm.api.metadata import get_mm_metadata
+from mm.api.user_mission_routes import (
+    get_user_mission_route,
+    list_user_missions_route,
+    patch_user_mission_route,
+    user_consent_queue,
+)
 from mm.api.user_routes import get_interaction_route, post_decision_route
-from mm.exceptions import NotFoundError, PendingDeniedError, PendingGoneError
+from mm.exceptions import ForbiddenOwnerError, NotFoundError, PendingDeniedError, PendingGoneError
 from mm.http.config import MMHttpSettings
-from mm.http.deps import get_settings, require_admin, require_agent_id
+from mm.http.deps import get_settings, require_admin, require_agent_id, require_user
 from mm.http.encoding import (
     auth_token_http_dict,
     build_aauth_requirement_header,
@@ -45,6 +53,10 @@ from mm.models import (
 
 class MissionProposalBody(BaseModel):
     mission_proposal: str = Field(..., description="Markdown mission text per protocol")
+    owner_hint: str | None = Field(
+        default=None,
+        description="Legal owner id for mission control / consent scoping.",
+    )
 
 
 class TokenRequestBody(BaseModel):
@@ -105,6 +117,27 @@ def _mission_outcome_response(out: Mission | DeferredResponse) -> JSONResponse:
     return _json_deferred(out)
 
 
+def _mission_list_item(m: Mission) -> dict[str, Any]:
+    return {
+        "s256": m.s256,
+        "approved": m.approved_text,
+        "state": m.state.value,
+        "agent_id": m.agent_id,
+        "created_at": m.created_at.isoformat(),
+        "owner_id": m.owner_id,
+    }
+
+
+def _mission_detail(m: Mission) -> dict[str, Any]:
+    return {
+        "mission": mission_http_dict(m),
+        "state": m.state.value,
+        "agent_id": m.agent_id,
+        "created_at": m.created_at.isoformat(),
+        "owner_id": m.owner_id,
+    }
+
+
 def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
     settings = settings or MMHttpSettings()
     mm: MMContainer = build_memory_mm(
@@ -141,7 +174,11 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
         body: MissionProposalBody,
         agent_id: Annotated[str, Depends(require_agent_id)],
     ):
-        proposal = MissionProposal(agent_id=agent_id, proposal_text=body.mission_proposal)
+        proposal = MissionProposal(
+            agent_id=agent_id,
+            proposal_text=body.mission_proposal,
+            owner_hint=body.owner_hint,
+        )
         out = create_mission_route(mm.lifecycle, proposal)
         return _mission_outcome_response(out)
 
@@ -225,16 +262,7 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
     ) -> list[dict[str, Any]]:
         st = mission_state_from_query(state)
         missions = list_missions_route(mm.mission_control, agent_id, st)
-        return [
-            {
-                "s256": m.s256,
-                "approved": m.approved_text,
-                "state": m.state.value,
-                "agent_id": m.agent_id,
-                "created_at": m.created_at.isoformat(),
-            }
-            for m in missions
-        ]
+        return [_mission_list_item(m) for m in missions]
 
     @app.get("/missions/{s256}")
     def inspect_mission(s256: str, _admin: Annotated[None, Depends(require_admin)]):
@@ -242,12 +270,7 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
             m = get_mission_route(mm.mission_control, s256)
         except NotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        return {
-            "mission": mission_http_dict(m),
-            "state": m.state.value,
-            "agent_id": m.agent_id,
-            "created_at": m.created_at.isoformat(),
-        }
+        return _mission_detail(m)
 
     @app.patch("/missions/{s256}")
     def patch_mission_route(s256: str, body: MissionPatchBody, _admin: Annotated[None, Depends(require_admin)]):
@@ -257,12 +280,49 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        return {
-            "mission": mission_http_dict(m),
-            "state": m.state.value,
-            "agent_id": m.agent_id,
-            "created_at": m.created_at.isoformat(),
-        }
+        return _mission_detail(m)
+
+    @app.get("/user/missions")
+    def list_user_missions(user_id: Annotated[str, Depends(require_user)]) -> list[dict[str, Any]]:
+        missions = list_user_missions_route(mm.mission_control, user_id)
+        return [_mission_list_item(m) for m in missions]
+
+    @app.get("/user/missions/{s256}")
+    def inspect_user_mission(s256: str, user_id: Annotated[str, Depends(require_user)]):
+        try:
+            m = get_user_mission_route(mm.mission_control, s256, user_id)
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ForbiddenOwnerError:
+            raise HTTPException(status_code=403, detail="not owner of this mission") from None
+        return _mission_detail(m)
+
+    @app.patch("/user/missions/{s256}")
+    def patch_user_mission_http(
+        s256: str, body: MissionPatchBody, user_id: Annotated[str, Depends(require_user)]
+    ):
+        try:
+            m = patch_user_mission_route(mm.mission_control, s256, user_id, body.state)
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ForbiddenOwnerError:
+            raise HTTPException(status_code=403, detail="not owner of this mission") from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return _mission_detail(m)
+
+    @app.get("/user/consent")
+    def list_user_consent(user_id: Annotated[str, Depends(require_user)]) -> list[dict[str, Any]]:
+        return user_consent_queue(mm.pending_store, user_id)
+
+    @app.get("/admin/pending")
+    def admin_list_pending(_admin: Annotated[None, Depends(require_admin)]) -> list[dict[str, Any]]:
+        """All open pending token/mission flows (admin console)."""
+        return mm.pending_store.list_open_pending_for_admin()
+
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.is_dir():
+        app.mount("/ui", StaticFiles(directory=str(static_dir), html=True), name="ui")
 
     return app
 

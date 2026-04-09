@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Consent — AAuth</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  </head>
+  <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+    <div class="mx-auto max-w-lg px-4 py-10" x-data="consentPage()" x-init="init()">
+      <h1 class="text-xl font-semibold text-white">Authorization request</h1>
+      <p class="mt-1 text-sm text-zinc-400">Review what the agent is asking for, then approve or deny.</p>
+
+      <div x-show="loading" class="mt-8 text-zinc-400">Loading…</div>
+      <p x-show="error && !loading" class="mt-8 text-red-400" x-text="error"></p>
+
+      <template x-if="ctx && !loading">
+        <div class="mt-8 space-y-6 rounded-xl border border-zinc-800 bg-zinc-900/80 p-6">
+          <div>
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Pending</h2>
+            <p class="mt-1 font-mono text-sm text-zinc-200" x-text="ctx.pending_id"></p>
+          </div>
+          <div x-show="ctx.resource_name">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Resource</h2>
+            <p class="mt-1 text-sm" x-text="ctx.resource_name"></p>
+          </div>
+          <div x-show="ctx.agent_name">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Agent</h2>
+            <p class="mt-1 text-sm" x-text="ctx.agent_name"></p>
+          </div>
+          <div x-show="ctx.justification">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Justification</h2>
+            <p class="mt-1 whitespace-pre-wrap text-sm text-zinc-300" x-text="ctx.justification"></p>
+          </div>
+          <div x-show="Object.keys(ctx.scopes || {}).length">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Scopes</h2>
+            <table class="mt-2 w-full text-left text-sm">
+              <tbody>
+                <template x-for="(v, k) in (ctx.scopes || {})" :key="k">
+                  <tr class="border-t border-zinc-800">
+                    <td class="py-2 font-mono text-zinc-400" x-text="k"></td>
+                    <td class="py-2 text-zinc-200" x-text="v"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <div x-show="ctx.mission">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Mission</h2>
+            <pre
+              class="mt-2 max-h-64 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300"
+              x-text="ctx.mission && ctx.mission.approved"
+            ></pre>
+          </div>
+          <div class="flex flex-wrap gap-3 pt-2" x-show="!done">
+            <button
+              type="button"
+              @click="decide(true)"
+              :disabled="submitting"
+              class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              @click="decide(false)"
+              :disabled="submitting"
+              class="rounded-lg border border-zinc-600 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+            >
+              Deny
+            </button>
+          </div>
+          <div x-show="done" class="space-y-4 border-t border-zinc-800 pt-4">
+            <p class="text-emerald-400">Decision recorded.</p>
+            <button
+              type="button"
+              @click="returnToConsole()"
+              class="w-full rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-500"
+            >
+              Return to Mission console
+            </button>
+            <p class="text-xs text-zinc-500">
+              Switches back to the dashboard tab, refreshes the pending list, and tries to close this tab. If the tab stays
+              open, close it yourself or use the link below.
+            </p>
+            <p class="text-xs text-zinc-600">
+              <a class="text-sky-400 hover:underline" :href="fallbackHref" x-text="fallbackLabel"></a>
+            </p>
+          </div>
+        </div>
+      </template>
+    </div>
+    <script>
+      function consentPage() {
+        return {
+          ctx: null,
+          loading: true,
+          error: "",
+          done: false,
+          submitting: false,
+          from: "",
+          fallbackHref: "index.html",
+          fallbackLabel: "Sign in",
+          async init() {
+            var params = new URLSearchParams(location.search);
+            var code = params.get("code");
+            this.from = params.get("from") || "";
+            if (this.from === "admin") {
+              this.fallbackHref = "admin.html";
+              this.fallbackLabel = "Open admin dashboard";
+            } else if (this.from === "user") {
+              this.fallbackHref = "user.html";
+              this.fallbackLabel = "Open legal user dashboard";
+            }
+            if (!code) {
+              this.loading = false;
+              this.error = "Missing ?code= in URL.";
+              return;
+            }
+            try {
+              var r = await fetch("/interaction?code=" + encodeURIComponent(code));
+              if (!r.ok) {
+                var j = await r.json().catch(function () {
+                  return {};
+                });
+                throw new Error(j.detail || r.statusText);
+              }
+              this.ctx = await r.json();
+            } catch (e) {
+              this.error = e.message || String(e);
+            } finally {
+              this.loading = false;
+            }
+          },
+          async decide(approved) {
+            if (!this.ctx) return;
+            this.submitting = true;
+            this.error = "";
+            try {
+              var r = await fetch("/interaction/" + encodeURIComponent(this.ctx.pending_id) + "/decision", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ approved: approved }),
+              });
+              if (!r.ok) {
+                var j = await r.json().catch(function () {
+                  return {};
+                });
+                throw new Error(j.detail || r.statusText);
+              }
+              this.done = true;
+            } catch (e) {
+              this.error = e.message || String(e);
+            } finally {
+              this.submitting = false;
+            }
+          },
+          returnToConsole() {
+            try {
+              if (window.opener && !window.opener.closed) {
+                try {
+                  window.opener.focus();
+                } catch (e1) {}
+                try {
+                  window.opener.location.reload();
+                } catch (e2) {}
+              }
+            } catch (e) {}
+            try {
+              window.close();
+            } catch (e3) {}
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

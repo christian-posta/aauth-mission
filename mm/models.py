@@ -43,12 +43,14 @@ class Mission:
     state: MissionState
     agent_id: str
     created_at: datetime
+    owner_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class MissionProposal:
     agent_id: str
     proposal_text: str
+    owner_hint: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

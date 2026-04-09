@@ -22,6 +22,10 @@ class MemoryMissionControl(MissionControl):
             out = [m for m in out if m.state == state]
         return sorted(out, key=lambda m: m.created_at, reverse=True)
 
+    def list_missions_for_owner(self, owner_id: str) -> list[Mission]:
+        out = [m for m in self._b.missions.values() if m.owner_id == owner_id]
+        return sorted(out, key=lambda m: m.created_at, reverse=True)
+
     def inspect_mission(self, s256: str) -> Mission:
         m = self._b.missions.get(s256)
         if m is None:

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Legal user — AAuth MM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+  </head>
+  <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased" x-data="userDash()" x-init="init()">
+    <header class="border-b border-zinc-800 bg-zinc-900/50">
+      <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+        <div>
+          <h1 class="text-lg font-semibold text-white">Mission console</h1>
+          <p class="text-xs text-zinc-500">Legal user — your missions and consent queue</p>
+        </div>
+        <button
+          type="button"
+          @click="signOut()"
+          class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+        >
+          Sign out
+        </button>
+      </div>
+    </header>
+    <main class="mx-auto max-w-6xl space-y-10 px-4 py-8">
+      <section>
+        <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Consent queue</h2>
+        <p x-show="consentError" class="mt-2 text-sm text-red-400" x-text="consentError"></p>
+        <div x-show="consentLoading" class="mt-4 text-zinc-500">Loading…</div>
+        <ul x-show="!consentLoading && queue.length === 0" class="mt-4 text-sm text-zinc-500">No pending items.</ul>
+        <ul class="mt-4 divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/50">
+          <template x-for="row in queue" :key="row.pending_id">
+            <li class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div>
+                <span class="font-mono text-sm text-zinc-200" x-text="row.pending_id"></span>
+                <span class="ml-2 rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400" x-text="row.kind"></span>
+                <span class="ml-2 text-xs text-zinc-500">agent <span x-text="row.agent_id"></span></span>
+              </div>
+              <a
+                class="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500"
+                :href="'consent.html?code=' + encodeURIComponent(row.code) + '&from=user'"
+                target="_blank"
+                rel="opener"
+              >
+                Review
+              </a>
+            </li>
+          </template>
+        </ul>
+      </section>
+
+      <section>
+        <div class="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">My missions</h2>
+            <p class="mt-1 text-xs text-zinc-600">Missions where you are the legal owner (<code class="text-zinc-500">owner_hint</code>).</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="st in stateFilters" :key="st || 'all'">
+              <button
+                type="button"
+                @click="stateFilter = st"
+                class="rounded-full border px-3 py-1 text-xs"
+                :class="stateFilter === st ? 'border-sky-500 bg-sky-500/20 text-sky-300' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'"
+                x-text="st ? st : 'All'"
+              ></button>
+            </template>
+          </div>
+        </div>
+        <p x-show="missionsError" class="mt-4 text-sm text-red-400" x-text="missionsError"></p>
+        <div x-show="missionsLoading" class="mt-4 text-zinc-500">Loading…</div>
+        <div class="mt-4 overflow-x-auto rounded-xl border border-zinc-800">
+          <table class="w-full min-w-[640px] text-left text-sm">
+            <thead class="border-b border-zinc-800 bg-zinc-900 text-xs uppercase text-zinc-500">
+              <tr>
+                <th class="px-4 py-3">s256</th>
+                <th class="px-4 py-3">Agent</th>
+                <th class="px-4 py-3">State</th>
+                <th class="px-4 py-3">Created</th>
+                <th class="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-800">
+              <template x-for="m in filteredMissions()" :key="m.s256">
+                <tr class="hover:bg-zinc-900/80">
+                  <td class="px-4 py-3 font-mono text-xs text-zinc-400" x-text="truncate(m.s256)"></td>
+                  <td class="px-4 py-3 text-zinc-300" x-text="m.agent_id"></td>
+                  <td class="px-4 py-3">
+                    <span class="rounded-full bg-zinc-800 px-2 py-0.5 text-xs" x-text="m.state"></span>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-zinc-500" x-text="m.created_at"></td>
+                  <td class="px-4 py-3">
+                    <button type="button" @click="openDetail(m)" class="text-sky-400 hover:underline">Details</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div
+      x-show="detail"
+      x-cloak
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      @keydown.escape.window="detail = null"
+      @click.self="detail = null"
+    >
+      <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
+        <div class="flex justify-between gap-4">
+          <h3 class="text-lg font-medium text-white">Mission</h3>
+          <button type="button" class="text-zinc-500 hover:text-white" @click="detail = null">&times;</button>
+        </div>
+        <template x-if="detail">
+          <div class="mt-4 space-y-4">
+            <p class="font-mono text-xs text-zinc-500" x-text="detail.s256"></p>
+            <pre class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300" x-text="detail.mission && detail.mission.approved"></pre>
+            <div class="flex flex-wrap gap-2">
+              <template x-for="act in patchActions(detail.state)" :key="act.state">
+                <button
+                  type="button"
+                  @click="patchMission(detail.s256, act.state)"
+                  class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm hover:bg-zinc-800"
+                  x-text="act.label"
+                ></button>
+              </template>
+            </div>
+            <p x-show="detailError" class="text-sm text-red-400" x-text="detailError"></p>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <script>
+      function userDash() {
+        return {
+          queue: [],
+          missions: [],
+          consentLoading: true,
+          missionsLoading: true,
+          consentError: "",
+          missionsError: "",
+          detail: null,
+          detailError: "",
+          stateFilter: "",
+          stateFilters: ["", "proposed", "active", "suspended", "completed", "revoked", "expired"],
+          init() {
+            if (!AAuthAuth.requireRole("user", "index.html")) return;
+            this.loadConsent();
+            this.loadMissions();
+          },
+          signOut() {
+            AAuthAuth.clear();
+            location.href = "index.html";
+          },
+          truncate(s) {
+            if (!s || s.length <= 16) return s || "";
+            return s.slice(0, 12) + "…";
+          },
+          async loadConsent() {
+            this.consentLoading = true;
+            this.consentError = "";
+            try {
+              this.queue = await AAuthApi.fetchJson("/user/consent");
+            } catch (e) {
+              this.consentError = e.message || String(e);
+            } finally {
+              this.consentLoading = false;
+            }
+          },
+          async loadMissions() {
+            this.missionsLoading = true;
+            this.missionsError = "";
+            try {
+              this.missions = await AAuthApi.fetchJson("/user/missions");
+            } catch (e) {
+              this.missionsError = e.message || String(e);
+            } finally {
+              this.missionsLoading = false;
+            }
+          },
+          filteredMissions() {
+            if (!this.stateFilter) return this.missions;
+            return this.missions.filter(function (m) {
+              return m.state === this.stateFilter;
+            }, this);
+          },
+          openDetail(summary) {
+            var self = this;
+            this.detailError = "";
+            AAuthApi.fetchJson("/user/missions/" + encodeURIComponent(summary.s256))
+              .then(function (d) {
+                self.detail = d;
+              })
+              .catch(function (e) {
+                self.detailError = e.message;
+              });
+          },
+          patchActions(current) {
+            var order = [
+              { state: "active", label: "Set active" },
+              { state: "suspended", label: "Suspend" },
+              { state: "revoked", label: "Revoke" },
+              { state: "completed", label: "Complete" },
+            ];
+            return order.filter(function (a) {
+              return a.state !== current;
+            });
+          },
+          async patchMission(s256, state) {
+            this.detailError = "";
+            try {
+              await AAuthApi.fetchJson("/user/missions/" + encodeURIComponent(s256), {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ state: state }),
+              });
+              this.detail = null;
+              await this.loadMissions();
+            } catch (e) {
+              this.detailError = e.message || String(e);
+            }
+          },
+        };
+      }
+    </script>
+    <style>
+      [x-cloak] {
+        display: none !important;
+      }
+    </style>
+  </body>
+</html>
