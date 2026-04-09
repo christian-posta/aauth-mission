@@ -1,0 +1,52 @@
+"""Internal storage for deferred (202) flows (protocol §Deferred Response State Machine)."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from mm.models import (
+    AuthTokenResponse,
+    Mission,
+    MissionProposal,
+    PendingStatus,
+    PendingStoreValue,
+    RequirementLevel,
+    TokenRequest,
+)
+
+
+class PendingRequestStore(ABC):
+    """Backing store for pending URLs; not exposed as public REST."""
+
+    @abstractmethod
+    def create_pending(self, original_request: TokenRequest | MissionProposal) -> str:
+        """Create a new pending record; return `pending_id` (path segment)."""
+
+    @abstractmethod
+    def get_pending(self, pending_id: str) -> PendingStoreValue:
+        """Return current deferred snapshot or terminal success (token or mission)."""
+
+    @abstractmethod
+    def update_pending(
+        self,
+        pending_id: str,
+        *,
+        status: PendingStatus | None = None,
+        requirement: RequirementLevel | None = None,
+        clarification: str | None = None,
+        timeout: int | None = None,
+        options: list[str] | None = None,
+    ) -> None:
+        """Update non-terminal pending state (e.g. status → interacting)."""
+
+    @abstractmethod
+    def resolve_pending(self, pending_id: str, result: AuthTokenResponse | Mission) -> None:
+        """Mark success; subsequent reads should reflect completion."""
+
+    @abstractmethod
+    def fail_pending(self, pending_id: str, error: str) -> None:
+        """Record terminal failure (implementation may map to 403/500)."""
+
+    @abstractmethod
+    def delete_pending(self, pending_id: str) -> None:
+        """Cancel: subsequent access returns 410 Gone per protocol."""

@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# Exercise MM REST endpoints against a running server (default: http://127.0.0.1:8000).
+#
+# Usage:
+#   chmod +x scripts/mm-demo.sh
+#   ./scripts/mm-demo.sh
+#   BASE_URL=http://127.0.0.1:8080 AGENT_ID=my-agent ./scripts/mm-demo.sh
+#
+# Start the server first, e.g.:
+#   source .venv/bin/activate && uvicorn mm.http.app:app --host 127.0.0.1 --port 8000
+
+set -euo pipefail
+
+BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
+BASE_URL="${BASE_URL%/}"
+AGENT_ID="${AGENT_ID:-demo-agent}"
+
+have_jq() { command -v jq >/dev/null 2>&1; }
+
+say() {
+  printf '\n\033[1m%s\033[0m\n' "$*"
+}
+
+sub() { printf '  %s\n' "$*"; }
+
+print_req() {
+  say "Request"
+  sub "$1 $2"
+  if [[ -n "${3:-}" ]]; then
+    sub "Headers: ${3}"
+  fi
+  if [[ -n "${4:-}" ]]; then
+    sub "Body:"
+    if have_jq && printf '%s' "$4" | jq -e . >/dev/null 2>&1; then
+      printf '%s\n' "$4" | jq . | sed 's/^/    /'
+    else
+      printf '    %s\n' "$4"
+    fi
+  fi
+}
+
+print_res() {
+  say "Response"
+  sed 's/^/  /'
+}
+
+abs_url() {
+  local path_or_url=$1
+  if [[ "$path_or_url" == http://* || "$path_or_url" == https://* ]]; then
+    printf '%s' "$path_or_url"
+  else
+    printf '%s%s' "$BASE_URL" "$path_or_url"
+  fi
+}
+
+http_status_from_file() {
+  head -1 "$1" | sed -n 's:^HTTP/[^ ]* \([0-9]*\).*:\1:p'
+}
+
+main() {
+  # Must be global (not `local`): EXIT trap runs outside this function and cannot see locals.
+  MM_DEMO_TMPDIR=$(mktemp -d)
+  trap 'rm -rf "${MM_DEMO_TMPDIR:-}"' EXIT
+
+  say "MM demo — target ${BASE_URL} (agent: ${AGENT_ID})"
+  if ! have_jq; then
+    sub "(install jq for prettier JSON: brew install jq)"
+  fi
+
+  # --- Well-known ---
+  print_req "GET" "${BASE_URL}/.well-known/aauth-mission.json"
+  curl -sS -i "${BASE_URL}/.well-known/aauth-mission.json" | print_res
+
+  # --- Mission ---
+  local body_mission='{"mission_proposal":"# Demo mission\n\nManual script exercise."}'
+  print_req "POST" "${BASE_URL}/mission" "X-AAuth-Agent-Id: ${AGENT_ID}" "$body_mission"
+  curl -sS -i -X POST "${BASE_URL}/mission" \
+    -H "Content-Type: application/json" \
+    -H "X-AAuth-Agent-Id: ${AGENT_ID}" \
+    -d "$body_mission" | print_res
+
+  # --- Token → deferred ---
+  local body_token='{"resource_token":"aa-resource.demo-token","justification":"Demo access"}'
+  print_req "POST" "${BASE_URL}/token" "X-AAuth-Agent-Id: ${AGENT_ID}" "$body_token"
+
+  local full="${MM_DEMO_TMPDIR}/token.i"
+  curl -sS -i -X POST "${BASE_URL}/token" \
+    -H "Content-Type: application/json" \
+    -H "X-AAuth-Agent-Id: ${AGENT_ID}" \
+    -d "$body_token" >"$full"
+
+  local HTTP_STATUS
+  HTTP_STATUS=$(http_status_from_file "$full")
+  say "Response"
+  sed 's/^/  /' <"$full"
+
+  if [[ "$HTTP_STATUS" != "202" ]]; then
+    say "Expected 202 from /token (ensure server has AAUTH_MM_AUTO_APPROVE_TOKEN unset/false). Skipping consent + DELETE demos."
+    say "Done."
+    exit 0
+  fi
+
+  local loc
+  loc=$(grep -i '^Location:' "$full" | head -1 | cut -d':' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/\r$//')
+  local pending_url
+  pending_url=$(abs_url "$loc")
+
+  local req_line
+  req_line=$(grep -i '^AAuth-Requirement:' "$full" | head -1 | sed 's/\r$//' || true)
+  local code_val
+  code_val=$(printf '%s' "$req_line" | grep -oE 'code="[^"]*"' | head -1 | sed 's/^code="//;s/"$//' || true)
+
+  if [[ -z "$code_val" ]]; then
+    say "Could not parse interaction code from AAuth-Requirement. Line was:"
+    sub "${req_line:-<missing>}"
+    exit 1
+  fi
+
+  say "Extracted Location (pending URL): ${pending_url}"
+  say "Extracted interaction code: ${code_val}"
+
+  # --- Interaction context ---
+  print_req "GET" "${BASE_URL}/interaction?code=${code_val}"
+  curl -sS -i "${BASE_URL}/interaction?code=${code_val}" | print_res
+
+  local pending_json="${MM_DEMO_TMPDIR}/interaction.json"
+  curl -sS "${BASE_URL}/interaction?code=${code_val}" >"$pending_json"
+
+  local pid
+  if have_jq; then
+    pid=$(jq -r '.pending_id' "$pending_json")
+  else
+    pid=$(grep -oE '"pending_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$pending_json" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+  fi
+  if [[ -z "$pid" || "$pid" == "null" ]]; then
+    say "Could not parse pending_id from interaction JSON"
+    cat "$pending_json"
+    exit 1
+  fi
+
+  # --- User approves ---
+  local body_dec='{"approved":true}'
+  print_req "POST" "${BASE_URL}/interaction/${pid}/decision" "Content-Type: application/json" "$body_dec"
+  curl -sS -i -X POST "${BASE_URL}/interaction/${pid}/decision" \
+    -H "Content-Type: application/json" \
+    -d "$body_dec" | print_res
+
+  # --- Poll pending → auth token ---
+  print_req "GET" "$pending_url" "(polling after consent)"
+  curl -sS -i "$pending_url" | print_res
+
+  # --- Cancel demo (second token, then DELETE) ---
+  say "Second token request, then DELETE pending (expect 410 on next GET)"
+  curl -sS -i -X POST "${BASE_URL}/token" \
+    -H "Content-Type: application/json" \
+    -H "X-AAuth-Agent-Id: ${AGENT_ID}" \
+    -d '{"resource_token":"aa-resource.cancel-demo"}' >"${MM_DEMO_TMPDIR}/t2.i"
+
+  say "Response"
+  sed 's/^/  /' <"${MM_DEMO_TMPDIR}/t2.i"
+
+  loc=$(grep -i '^Location:' "${MM_DEMO_TMPDIR}/t2.i" | head -1 | cut -d':' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/\r$//')
+  pending_url=$(abs_url "$loc")
+
+  print_req "DELETE" "$pending_url" "X-AAuth-Agent-Id: ${AGENT_ID}"
+  curl -sS -i -X DELETE "$pending_url" \
+    -H "X-AAuth-Agent-Id: ${AGENT_ID}" | print_res
+
+  print_req "GET" "$pending_url" "(expect 410 Gone)"
+  curl -sS -i "$pending_url" | print_res
+
+  say "Done."
+}
+
+main "$@"
