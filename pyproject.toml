@@ -5,7 +5,9 @@ description = "AAuth Mission Manager reference API (in-memory) per draft-hardt-a
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aauth==0.2.0",
     "aiofiles>=23.2.0",
+    "bleach>=6.0",
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.5.0",

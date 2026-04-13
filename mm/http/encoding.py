@@ -26,6 +26,8 @@ def consent_context_http_dict(c: ConsentContext) -> dict[str, object]:
         payload["agent_name"] = c.agent_name
     if c.mission is not None:
         payload["mission"] = mission_http_dict(c.mission)
+    if c.clarification_responses:
+        payload["clarification_responses"] = list(c.clarification_responses)
     return payload
 
 

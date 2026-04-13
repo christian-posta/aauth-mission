@@ -26,6 +26,31 @@ With the server running on port 8000:
 
 The script prints each HTTP request (method, URL, headers, JSON body) then the full `curl -i` response (status, response headers, body). It runs the consent flow and a DELETE→410 demo. Install **`jq`** for indented request bodies (`brew install jq`).
 
+### HWK sample client (`scripts/hwk-mm-client.sh`)
+
+`./scripts/mm-demo.sh` uses **`X-AAuth-Agent-Id`** (dev stub). For **real HWK** signing (`AAUTH_MM_INSECURE_DEV=false`), use the Python-backed wrapper **`scripts/hwk-mm-client.sh`**, which calls **`aauth.sign_request(..., sig_scheme="hwk")`**, persists a reusable **Ed25519** key as PEM, **`POST /token`**, then **`GET` polls** the `Location` pending URL with matching signatures.
+
+1. Start the MM with agent signature verification enabled:
+
+   ```bash
+   AAUTH_MM_INSECURE_DEV=false uvicorn mm.http.app:app --host 127.0.0.1 --port 8000
+   ```
+
+2. In another terminal (once: `chmod +x scripts/hwk-mm-client.sh`):
+
+   ```bash
+   ./scripts/hwk-mm-client.sh
+   # or, e.g.:
+   ./scripts/hwk-mm-client.sh --base-url http://127.0.0.1:8000 --resource-token 'your-resource-jwt'
+   ```
+
+   - **Default key file:** `scripts/.hwk-mm-client-key.pem` (created on first run; listed in `.gitignore`). Override with **`--key-file /path/to/key.pem`**.
+   - **Base URL:** defaults to **`http://127.0.0.1:8000`**; you can set **`AAUTH_MM_BASE_URL`** instead of **`--base-url`**.
+   - If **`POST /token`** returns **`202`**, the client prints a **consent** URL (`/ui/consent.html?code=...`) and polls until the token is ready, the request is **declined** (**`403`** with `denied` / `abandoned`), or another error stops the run.
+   - On success (**`200`**), it prints **`expires_in`** and decodes **JWT payload** (unverified) when `auth_token` is a standard three-segment JWT; otherwise it prints the raw **`auth_token`** string (the in-memory federator stub often returns non-JWT placeholders).
+
+The implementation is **`scripts/hwk_mm_client.py`** if you want to run it with **`python scripts/hwk_mm_client.py ...`** directly.
+
 ### With plain venv + pip
 
 ```bash
@@ -42,7 +67,7 @@ The repo ships a small browser UI (HTML + Alpine.js + Tailwind via CDN) for tryi
 - **URL:** `{PUBLIC_ORIGIN}/ui/` (e.g. [http://localhost:8000/ui/](http://localhost:8000/ui/)). Set **`AAUTH_MM_PUBLIC_ORIGIN`** to the same origin you use in the browser (`localhost` vs `127.0.0.1` matters for URLs in `AAuth-Requirement`).
 - **Sign-in:** paste a **bearer token** on the login page. The UI tries the legal-user API first, then the admin mission-control API (see `mm/http/static/index.html` for the exact order).
 - **Admin:** uses `GET/PATCH /missions` and **`GET /admin/pending`** (open deferred flows: token and mission proposals). The admin dashboard lists these under **Open pending requests** with a **Consent** link when an interaction code exists. If `ADMIN_TOKEN` is set, send that bearer token; if unset, mission control and `/admin/pending` are open (same as the API).
-- **Legal user:** set `USER_TOKEN` and `USER_ID` (see table below). Missions must include `owner_hint` on `POST /mission` matching `USER_ID`, or they will not appear under “My missions”. Token requests pending consent appear in the consent queue when the MM can associate the agent with an owned mission (see `EVOLUTION.md` / in-memory behavior).
+- **Legal user:** set `USER_TOKEN` and `USER_ID` (see table below). Missions must include `owner_hint` on `POST /mission` matching `USER_ID`, or they will not appear under “My missions”. Token requests pending consent appear in the consent queue when the MM can associate the agent with an owned mission (same `X-AAuth-Agent-Id` / HWK identity as a mission owned by that user).
 - **Consent:** open **Review** from the legal-user queue, or go directly to `/ui/consent.html?code=<code>` using the `code` from `AAuth-Requirement` or `GET /user/consent`.
 
 **Example (one terminal):**
@@ -133,12 +158,14 @@ Each variable below is read with the **`AAUTH_MM_` prefix** (e.g. `AAUTH_MM_ADMI
 | `USER_TOKEN` | *(unset)* | If set, enables `GET/PATCH /user/missions` and `GET /user/consent`; require `Authorization: Bearer <token>`. If unset, those routes return `503`. |
 | `USER_ID` | `user` | Owner id for the legal-user token; must match `owner_hint` on missions you want to see in `/user/missions`. |
 | `AUTO_APPROVE_TOKEN` | `false` | If `true`, `POST /token` skips consent and returns a fake auth token immediately. |
+| `AUTO_APPROVE_MISSION` | `true` | If `false`, `POST /mission` returns `202` pending until the user approves via the interaction flow. |
+| `PENDING_TTL_SECONDS` | `600` | Time-to-live for open pending rows (expired → `408` / `403 abandoned` if the user had opened consent). |
 | `AGENT_JWT_STUB` | `stub-agent-jwt` | Dummy agent JWT passed to the federator stub. |
 | `JWKS_URI` | *(unset)* | Override `jwks_uri` in `/.well-known/aauth-mission.json`. |
 
-**Agent identity (dev):** with `INSECURE_DEV=true`, send header **`X-AAuth-Agent-Id`** (any string) on `POST /mission`, `POST /token`, `POST/DELETE /pending/...`.
+**Agent identity (dev):** with `INSECURE_DEV=true`, send header **`X-AAuth-Agent-Id`** (any string) on `POST /mission`, `POST /token`, `GET/POST/DELETE /pending/...`.
 
-Production deployments should set `INSECURE_DEV=false` and plug in real HTTP message signature + agent JWT verification (not included here).
+**Agent identity (production):** set `INSECURE_DEV=false`. Agent requests must include **HTTP Message Signatures** (RFC 9421) with **`Signature-Input`**, **`Signature`**, and **`Signature-Key`** using scheme **`hwk`** (public key in `Signature-Key`). The server uses the **`aauth`** library to verify signatures; the agent identifier is the **JWK thumbprint** of that key (pseudonymous). Admin and legal-user routes continue to use **`Authorization: Bearer`** only.
 
 ## Flow (in-memory)
 
@@ -161,10 +188,10 @@ The **`AAuth-Requirement`** header advertises **`url="<PUBLIC_ORIGIN>/ui/consent
    - `POST /interaction/{pending_id}/decision` with `{"approved": true}` or `{"approved": false}` — completes or denies (the HTML page does this for you).
 
 3. **Agent — poll until ready**  
-   - `GET` the same URL as **`Location`** (i.e. `GET /pending/{pending_id}`) **without** agent headers on this handler in the reference app (poll as often as `Retry-After` suggests).  
+   - `GET` the same URL as **`Location`** (i.e. `GET /pending/{pending_id}`) using the **same agent credentials** as `POST /token` (with `INSECURE_DEV=true`, header **`X-AAuth-Agent-Id`**; with `INSECURE_DEV=false`, the same HWK signature headers). Poll as `Retry-After` suggests.  
    - While consent is outstanding → **`202`** with the same pending semantics.  
-   - After approval → **`200`** with `{"auth_token","expires_in"}`.  
-   - If the pending was cancelled → **`410`**; if denied → **`403`**.
+   - After approval → **`200`** once with `{"auth_token","expires_in"}`; a **second** `GET` on the same pending URL returns **`404`** (terminal response is single-use).  
+   - If the pending was cancelled → **`410`**; if denied → **`403`** (JSON body uses `error` / `error_description` per the protocol).
 
 ### Example: consent with curl, then poll
 
@@ -199,7 +226,7 @@ curl -sS -X POST "http://localhost:8000/interaction/PENDING_ID/decision" \
 LOC="http://localhost:8000/pending/PENDING_ID"   # use the exact Location from step A
 
 while true; do
-  R=$(curl -sS -w "\n%{http_code}" -o /tmp/mm-poll.json "$LOC")
+  R=$(curl -sS -w "\n%{http_code}" -o /tmp/mm-poll.json -H 'X-AAuth-Agent-Id: my-agent' "$LOC")
   CODE=$(echo "$R" | tail -n1)
   if [ "$CODE" = "200" ]; then
     cat /tmp/mm-poll.json

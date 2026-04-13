@@ -1,12 +1,16 @@
-"""Authentication dependencies (stubs aligned with plan: signatures + admin bearer)."""
+"""Authentication dependencies: HWK HTTP message signatures + admin/user bearer tokens."""
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
+import aauth
 from fastapi import Depends, Header, HTTPException, Request
 
 from mm.http.config import MMHttpSettings
+
+logger = logging.getLogger(__name__)
 
 
 def get_settings(request: Request) -> MMHttpSettings:
@@ -15,7 +19,22 @@ def get_settings(request: Request) -> MMHttpSettings:
     return s
 
 
-def require_agent_id(
+def _agent_id_from_signature_key(signature_key_header: str) -> str:
+    """Pseudonymous agent id: JWK thumbprint of the HWK public key (RFC 7638)."""
+    parsed = aauth.parse_signature_key(signature_key_header)
+    if parsed.get("scheme") != "hwk":
+        raise HTTPException(
+            status_code=401,
+            detail="Signature-Key must use scheme=hwk for this Mission Manager",
+        )
+    params = parsed.get("params") or {}
+    if not params:
+        raise HTTPException(status_code=401, detail="Could not parse public key from Signature-Key")
+    jwk = dict(params)
+    return aauth.calculate_jwk_thumbprint(jwk)
+
+
+async def require_agent_id(
     request: Request,
     settings: Annotated[MMHttpSettings, Depends(get_settings)],
     x_aauth_agent_id: Annotated[str | None, Header(alias="X-AAuth-Agent-Id")] = None,
@@ -27,15 +46,48 @@ def require_agent_id(
             status_code=401,
             detail="X-AAuth-Agent-Id required when AAUTH_MM_INSECURE_DEV enables stub agent identification",
         )
-    for name in ("signature-input", "signature", "signature-key"):
-        if request.headers.get(name) is None:
-            raise HTTPException(status_code=401, detail=f"Missing HTTP signature header: {name}")
-    if not x_aauth_agent_id:
+
+    sig_input = request.headers.get("signature-input")
+    sig = request.headers.get("signature")
+    sig_key = request.headers.get("signature-key")
+    if not sig_input or not sig or not sig_key:
         raise HTTPException(
             status_code=401,
-            detail="Signature verification is not implemented; set X-AAuth-Agent-Id after enabling verification.",
+            detail="Missing HTTP signature headers (Signature-Input, Signature, Signature-Key)",
         )
-    return x_aauth_agent_id
+
+    body = await request.body()
+    target_uri = str(request.url)
+    hdrs = {k: v for k, v in request.headers.items()}
+
+    ok = aauth.verify_signature(
+        method=request.method,
+        target_uri=target_uri,
+        headers=hdrs,
+        body=body,
+        signature_input_header=sig_input,
+        signature_header=sig,
+        signature_key_header=sig_key,
+    )
+    if not ok:
+        raise HTTPException(status_code=401, detail="HTTP signature verification failed")
+
+    return _agent_id_from_signature_key(sig_key)
+
+
+def parse_prefer_wait(prefer: str | None) -> int | None:
+    """Parse Prefer: wait=N (RFC 7240). Returns N or None."""
+    if not prefer:
+        return None
+    # e.g. "wait=45" or "respond-async, wait=30"
+    for part in prefer.split(","):
+        part = part.strip()
+        if part.lower().startswith("wait="):
+            try:
+                return int(part.split("=", 1)[1].strip())
+            except ValueError:
+                return None
+    return None
 
 
 def require_admin(

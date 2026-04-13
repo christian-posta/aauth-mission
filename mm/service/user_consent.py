@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from mm.models import ConsentContext, UserDecision
+from mm.models import ConsentContext, DecisionResult, UserDecision
 
 
 class UserConsent(ABC):
@@ -15,7 +15,7 @@ class UserConsent(ABC):
         """Resolve interaction `code` to what the user should see."""
 
     @abstractmethod
-    def record_decision(self, pending_id: str, decision: UserDecision) -> None:
+    def record_decision(self, pending_id: str, decision: UserDecision) -> DecisionResult:
         """Apply approve / deny / clarification question."""
 
     @abstractmethod

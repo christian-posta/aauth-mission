@@ -33,14 +33,24 @@ def build_memory_mm(
     *,
     public_origin: str,
     auto_approve_token: bool = False,
+    auto_approve_mission: bool = True,
     agent_jwt_stub: str = "stub-agent-jwt",
+    pending_ttl_seconds: int = 600,
 ) -> MMContainer:
     """Wire in-memory stores and fake AS federation into the MM service interfaces."""
     backend = MMBackend()
     origin = public_origin.rstrip("/")
-    store = MemoryPendingStore(backend, interaction_base_url=origin)
+    store = MemoryPendingStore(
+        backend,
+        interaction_base_url=origin,
+        default_ttl_seconds=pending_ttl_seconds,
+    )
     federator = FakeASFederator()
-    lifecycle = MemoryMissionLifecycle(backend)
+    lifecycle = MemoryMissionLifecycle(
+        backend,
+        store,
+        auto_approve_mission=auto_approve_mission,
+    )
     token_broker = MemoryTokenBroker(
         store,
         federator,

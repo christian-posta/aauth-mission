@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import secrets
+import time
 from typing import Any
 
-from mm.exceptions import PendingDeniedError, PendingGoneError
-from mm.impl.backend import MMBackend, PendingRecord
+from mm.exceptions import (
+    InvalidInteractionCodeError,
+    NotFoundError,
+    PendingDeniedError,
+    PendingExpiredError,
+    PendingGoneError,
+    SlowDownError,
+)
+from mm.impl.backend import MMBackend, PendingRecord, utc_now
 from mm.models import (
     AuthTokenResponse,
     DeferredResponse,
@@ -18,6 +26,9 @@ from mm.models import (
     TokenRequest,
 )
 from mm.service.pending_store import PendingRequestStore
+
+# Minimum interval between polls (seconds); below this returns 429 slow_down per spec backoff guidance.
+_MIN_POLL_INTERVAL = 0.05
 
 
 def _pending_path(pending_id: str) -> str:
@@ -31,9 +42,16 @@ CONSENT_UI_PATH = "/ui/consent.html"
 class MemoryPendingStore(PendingRequestStore):
     """If set, included on deferred responses when `requirement=interaction`."""
 
-    def __init__(self, backend: MMBackend, interaction_base_url: str) -> None:
+    def __init__(
+        self,
+        backend: MMBackend,
+        interaction_base_url: str,
+        *,
+        default_ttl_seconds: int = 600,
+    ) -> None:
         self._b = backend
         self._interaction_base_url = interaction_base_url.rstrip("/")
+        self._default_ttl_seconds = default_ttl_seconds
 
     @property
     def interaction_base_url(self) -> str:
@@ -54,6 +72,7 @@ class MemoryPendingStore(PendingRequestStore):
                 pending_id=pending_id,
                 interaction_code=code,
                 kind="token",
+                ttl_seconds=self._default_ttl_seconds,
                 token_request=original_request,
                 owner_id=owner_id,
             )
@@ -62,6 +81,7 @@ class MemoryPendingStore(PendingRequestStore):
                 pending_id=pending_id,
                 interaction_code=code,
                 kind="mission",
+                ttl_seconds=self._default_ttl_seconds,
                 mission_proposal=original_request,
                 owner_id=original_request.owner_hint,
             )
@@ -72,19 +92,57 @@ class MemoryPendingStore(PendingRequestStore):
     def _require(self, pending_id: str) -> PendingRecord:
         rec = self._b.pending.get(pending_id)
         if rec is None:
-            from mm.exceptions import NotFoundError
-
             raise NotFoundError("unknown pending id")
         return rec
 
-    def get_pending(self, pending_id: str) -> PendingStoreValue:
+    def assert_agent_owns_pending(self, pending_id: str, agent_id: str) -> None:
+        """Reject with 404 if the pending row is not for this agent (do not leak existence)."""
+        try:
+            rec = self._require(pending_id)
+        except NotFoundError:
+            raise
+        aid: str | None = None
+        if rec.token_request is not None:
+            aid = rec.token_request.agent_id
+        elif rec.mission_proposal is not None:
+            aid = rec.mission_proposal.agent_id
+        if aid is None or aid != agent_id:
+            raise NotFoundError("unknown pending id")
+
+    def _check_ttl(self, rec: PendingRecord) -> None:
+        if rec.terminal is not None or rec.gone or rec.failure:
+            return
+        elapsed = (utc_now() - rec.created_at).total_seconds()
+        if elapsed <= rec.ttl_seconds:
+            return
+        if rec.status == PendingStatus.INTERACTING:
+            self.fail_pending(rec.pending_id, "abandoned")
+        else:
+            self.fail_pending(rec.pending_id, "expired")
+
+    def _rate_limit_poll(self, rec: PendingRecord) -> None:
+        now = time.monotonic()
+        if rec.last_poll_monotonic is not None:
+            if now - rec.last_poll_monotonic < _MIN_POLL_INTERVAL:
+                raise SlowDownError()
+        rec.last_poll_monotonic = now
+
+    def get_pending(self, pending_id: str, *, for_poll: bool = False) -> PendingStoreValue:
         rec = self._require(pending_id)
+        self._check_ttl(rec)
         if rec.gone:
             raise PendingGoneError()
         if rec.failure:
+            if rec.failure == "expired":
+                raise PendingExpiredError()
             raise PendingDeniedError(rec.failure)
         if rec.terminal is not None:
+            if rec.delivered:
+                raise NotFoundError("unknown pending id")
+            rec.delivered = True
             return rec.terminal
+        if for_poll:
+            self._rate_limit_poll(rec)
         return self._to_deferred(rec)
 
     def get_interaction_code(self, pending_id: str) -> str:
@@ -149,6 +207,10 @@ class MemoryPendingStore(PendingRequestStore):
         if options is not None:
             rec.options = options
 
+    def set_callback_url(self, pending_id: str, callback_url: str | None) -> None:
+        rec = self._require(pending_id)
+        rec.callback_url = callback_url
+
     def resolve_pending(self, pending_id: str, result: AuthTokenResponse | Mission) -> None:
         rec = self._require(pending_id)
         rec.terminal = result
@@ -165,11 +227,9 @@ class MemoryPendingStore(PendingRequestStore):
         rec.terminal = None
 
     def lookup_code(self, code: str) -> PendingRecord:
-        pid = self._b.code_index.get(code)
+        pid = self._b.code_index.pop(code, None)
         if pid is None:
-            from mm.exceptions import NotFoundError
-
-            raise NotFoundError("unknown interaction code")
+            raise InvalidInteractionCodeError()
         return self._require(pid)
 
     def get_record(self, pending_id: str) -> PendingRecord:

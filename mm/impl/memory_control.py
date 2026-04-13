@@ -39,13 +39,25 @@ class MemoryMissionControl(MissionControl):
         return updated
 
     def suspend_mission(self, s256: str) -> Mission:
+        m = self.inspect_mission(s256)
+        if m.state != MissionState.ACTIVE:
+            raise ValueError("can only suspend an active mission")
         return self._set_state(s256, MissionState.SUSPENDED)
 
     def resume_mission(self, s256: str) -> Mission:
+        m = self.inspect_mission(s256)
+        if m.state != MissionState.SUSPENDED:
+            raise ValueError("can only resume a suspended mission")
         return self._set_state(s256, MissionState.ACTIVE)
 
     def revoke_mission(self, s256: str) -> Mission:
+        m = self.inspect_mission(s256)
+        if m.state not in (MissionState.ACTIVE, MissionState.SUSPENDED):
+            raise ValueError("can only revoke an active or suspended mission")
         return self._set_state(s256, MissionState.REVOKED)
 
     def complete_mission(self, s256: str) -> Mission:
+        m = self.inspect_mission(s256)
+        if m.state != MissionState.ACTIVE:
+            raise ValueError("can only complete an active mission")
         return self._set_state(s256, MissionState.COMPLETED)

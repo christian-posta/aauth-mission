@@ -119,12 +119,16 @@ main() {
   say "Extracted Location (pending URL): ${pending_url}"
   say "Extracted interaction code: ${code_val}"
 
-  # --- Interaction context ---
-  print_req "GET" "${BASE_URL}/interaction?code=${code_val}"
-  curl -sS -i "${BASE_URL}/interaction?code=${code_val}" | print_res
-
+  # --- Interaction context (single GET; interaction code is single-use) ---
   local pending_json="${MM_DEMO_TMPDIR}/interaction.json"
+  print_req "GET" "${BASE_URL}/interaction?code=${code_val}"
   curl -sS "${BASE_URL}/interaction?code=${code_val}" >"$pending_json"
+  say "Response"
+  if have_jq; then
+    jq . "$pending_json" | sed 's/^/  /'
+  else
+    sed 's/^/  /' <"$pending_json"
+  fi
 
   local pid
   if have_jq; then
@@ -146,8 +150,8 @@ main() {
     -d "$body_dec" | print_res
 
   # --- Poll pending → auth token ---
-  print_req "GET" "$pending_url" "(polling after consent)"
-  curl -sS -i "$pending_url" | print_res
+  print_req "GET" "$pending_url" "X-AAuth-Agent-Id: ${AGENT_ID} (polling after consent)"
+  curl -sS -i "$pending_url" -H "X-AAuth-Agent-Id: ${AGENT_ID}" | print_res
 
   # --- Cancel demo (second token, then DELETE) ---
   say "Second token request, then DELETE pending (expect 410 on next GET)"
@@ -166,8 +170,8 @@ main() {
   curl -sS -i -X DELETE "$pending_url" \
     -H "X-AAuth-Agent-Id: ${AGENT_ID}" | print_res
 
-  print_req "GET" "$pending_url" "(expect 410 Gone)"
-  curl -sS -i "$pending_url" | print_res
+  print_req "GET" "$pending_url" "X-AAuth-Agent-Id: ${AGENT_ID} (expect 410 Gone)"
+  curl -sS -i "$pending_url" -H "X-AAuth-Agent-Id: ${AGENT_ID}" | print_res
 
   say "Done."
 }

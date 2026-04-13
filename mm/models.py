@@ -92,12 +92,20 @@ class ConsentContext:
     justification: str | None = None
     mission: Mission | None = None
     agent_name: str | None = None
+    clarification_responses: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class UserDecision:
     approved: bool
     clarification_question: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionResult:
+    """Outcome of POST /interaction/{pending_id}/decision."""
+
+    redirect_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

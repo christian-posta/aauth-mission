@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+import logging
+
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mm.models import MMMetadata
+
+logger = logging.getLogger(__name__)
 
 
 class MMHttpSettings(BaseSettings):
@@ -39,6 +43,10 @@ class MMHttpSettings(BaseSettings):
         default=False,
         description="If true, skip consent and return a fake auth token immediately on POST /token.",
     )
+    auto_approve_mission: bool = Field(
+        default=True,
+        description="If false, POST /mission returns 202 pending until user approves via interaction flow.",
+    )
     jwks_uri: str | None = Field(
         default=None,
         description="Override JWKS URI in metadata; default is {origin}/.well-known/jwks.json",
@@ -47,6 +55,20 @@ class MMHttpSettings(BaseSettings):
         default="stub-agent-jwt",
         description="Placeholder agent JWT string passed to FakeASFederator.",
     )
+    pending_ttl_seconds: int = Field(
+        default=600,
+        ge=1,
+        description="TTL for open pending rows before expired/abandoned (protocol pending URL security).",
+    )
+
+    @model_validator(mode="after")
+    def warn_https_when_not_insecure_dev(self) -> MMHttpSettings:
+        if not self.insecure_dev and self.public_origin.startswith("http://"):
+            logger.warning(
+                "AAUTH_MM_PUBLIC_ORIGIN uses http:// while INSECURE_DEV=false; "
+                "spec requires interaction URLs to use https in production."
+            )
+        return self
 
     def metadata(self) -> MMMetadata:
         o = self.public_origin.rstrip("/")

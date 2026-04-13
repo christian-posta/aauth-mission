@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 
+import aauth
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,6 +23,22 @@ def client() -> TestClient:
         )
     )
     return TestClient(app)
+
+
+def _sign_post(path: str, body: dict, private_key) -> tuple[bytes, dict[str, str]]:
+    body_bytes = json.dumps(body).encode("utf-8")
+    target = f"http://testserver{path}"
+    h = aauth.sign_request(
+        "POST",
+        target,
+        {"Host": "testserver", "Content-Type": "application/json"},
+        body_bytes,
+        private_key=private_key,
+        sig_scheme="hwk",
+    )
+    merged = dict(h)
+    merged["Content-Type"] = "application/json"
+    return body_bytes, merged
 
 
 def test_well_known_metadata(client: TestClient) -> None:
@@ -67,12 +85,29 @@ def test_token_defer_consent_flow(client: TestClient) -> None:
         f"/interaction/{pending_id}/decision",
         json={"approved": True},
     )
-    assert r_dec.status_code == 204
+    assert r_dec.status_code == 200
+    assert r_dec.json() == {}
 
-    r_poll = client.get(r.headers["Location"])
+    loc = r.headers["Location"]
+    r_poll = client.get(loc, headers={"X-AAuth-Agent-Id": "agent-1"})
     assert r_poll.status_code == 200
     body = r_poll.json()
     assert "auth_token" in body and "expires_in" in body
+
+    r_poll2 = client.get(loc, headers={"X-AAuth-Agent-Id": "agent-1"})
+    assert r_poll2.status_code == 404
+    err = r_poll2.json()
+    assert err.get("error") == "invalid_request"
+
+
+def test_post_token_hwk_signed(client: TestClient) -> None:
+    app = create_app(MMHttpSettings(insecure_dev=False, public_origin="http://test.example", auto_approve_token=True))
+    c = TestClient(app)
+    pk, _pub = aauth.generate_ed25519_keypair()
+    body_bytes, hdrs = _sign_post("/token", {"resource_token": "x"}, pk)
+    r = c.request("POST", "/token", content=body_bytes, headers=hdrs)
+    assert r.status_code == 200
+    assert "auth_token" in r.json()
 
 
 def test_admin_pending_lists_open_token(client: TestClient) -> None:
@@ -153,5 +188,62 @@ def test_pending_gone_after_delete(client: TestClient) -> None:
     loc = r.headers["Location"]
     r_del = client.delete(loc, headers={"X-AAuth-Agent-Id": "agent-1"})
     assert r_del.status_code == 204
-    r_gone = client.get(loc)
+    r_gone = client.get(loc, headers={"X-AAuth-Agent-Id": "agent-1"})
     assert r_gone.status_code == 410
+    assert r_gone.json().get("error") == "invalid_code"
+
+
+def test_mission_invalid_state_transition(client: TestClient) -> None:
+    r = client.post(
+        "/mission",
+        json={"mission_proposal": "# X\n\nY"},
+        headers={"X-AAuth-Agent-Id": "agent-1"},
+    )
+    assert r.status_code == 200
+    s256 = r.json()["mission"]["s256"]
+    r2 = client.patch(f"/missions/{s256}", json={"state": "completed"})
+    assert r2.status_code == 200
+    r3 = client.patch(f"/missions/{s256}", json={"state": "active"})
+    assert r3.status_code == 400
+
+
+def test_interaction_code_single_use(client: TestClient) -> None:
+    r = client.post(
+        "/token",
+        json={"resource_token": "jwt"},
+        headers={"X-AAuth-Agent-Id": "agent-1"},
+    )
+    assert r.status_code == 202
+    req_hdr = r.headers.get("AAuth-Requirement", "")
+    m = re.search(r'code="([^"]+)"', req_hdr)
+    assert m
+    code = m.group(1)
+    r1 = client.get("/interaction", params={"code": code})
+    assert r1.status_code == 200
+    r2 = client.get("/interaction", params={"code": code})
+    assert r2.status_code == 410
+
+
+def test_clarification_round_limit(client: TestClient) -> None:
+    r = client.post(
+        "/token",
+        json={"resource_token": "jwt"},
+        headers={"X-AAuth-Agent-Id": "agent-1"},
+    )
+    assert r.status_code == 202
+    loc = r.headers["Location"]
+    pid = loc.strip("/").split("/")[-1]
+    for _ in range(5):
+        pr = client.post(
+            loc,
+            json={"clarification_response": "answer"},
+            headers={"X-AAuth-Agent-Id": "agent-1"},
+        )
+        assert pr.status_code == 202
+    pr6 = client.post(
+        loc,
+        json={"clarification_response": "too many"},
+        headers={"X-AAuth-Agent-Id": "agent-1"},
+    )
+    assert pr6.status_code == 400
+    assert pr6.json().get("error") == "invalid_request"

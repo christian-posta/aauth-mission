@@ -24,3 +24,27 @@ class ForbiddenOwnerError(Exception):
     """Mission not owned by the authenticated legal user; HTTP 403."""
 
     pass
+
+
+class PendingExpiredError(Exception):
+    """Pending request timed out; HTTP 408."""
+
+    pass
+
+
+class SlowDownError(Exception):
+    """Polling too frequently; HTTP 429."""
+
+    pass
+
+
+class ClarificationLimitError(Exception):
+    """Too many clarification rounds; HTTP 400."""
+
+    pass
+
+
+class InvalidInteractionCodeError(Exception):
+    """Unknown or already-used interaction code; HTTP 410."""
+
+    pass

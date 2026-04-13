@@ -7,7 +7,7 @@ from mm.federation.as_federator import ASFederator
 from mm.impl.backend import MMBackend
 from mm.impl.memory_pending import MemoryPendingStore
 from mm.impl.mission_utils import mission_from_proposal
-from mm.models import ConsentContext, DeferredResponse, PendingStatus, RequirementLevel, UserDecision
+from mm.models import ConsentContext, DecisionResult, DeferredResponse, PendingStatus, RequirementLevel, UserDecision
 from mm.service.user_consent import UserConsent
 
 
@@ -35,6 +35,7 @@ class MemoryUserConsent(UserConsent):
                 if m.agent_id == aid:
                     mission = m
                     break
+        responses = tuple(rec.clarification_responses) if rec.clarification_responses else ()
         return ConsentContext(
             pending_id=rec.pending_id,
             resource_name=None,
@@ -42,9 +43,10 @@ class MemoryUserConsent(UserConsent):
             justification=justification,
             mission=mission,
             agent_name=None,
+            clarification_responses=responses,
         )
 
-    def record_decision(self, pending_id: str, decision: UserDecision) -> None:
+    def record_decision(self, pending_id: str, decision: UserDecision) -> DecisionResult:
         rec = self._store.get_record(pending_id)
 
         if decision.clarification_question:
@@ -54,10 +56,12 @@ class MemoryUserConsent(UserConsent):
                 clarification=decision.clarification_question,
                 status=PendingStatus.INTERACTING,
             )
-            return
+            return DecisionResult(redirect_url=None)
+
         if not decision.approved:
-            self._store.fail_pending(pending_id, "user_denied")
-            return
+            self._store.fail_pending(pending_id, "denied")
+            return DecisionResult(redirect_url=rec.callback_url)
+
         if rec.kind == "token" and rec.token_request is not None:
             auth = self._federator.request_auth_token(
                 rec.token_request.resource_token,
@@ -67,12 +71,14 @@ class MemoryUserConsent(UserConsent):
             if isinstance(auth, DeferredResponse):
                 raise RuntimeError("federator unexpectedly deferred")
             self._store.resolve_pending(pending_id, auth)
-            return
+            return DecisionResult(redirect_url=rec.callback_url)
+
         if rec.kind == "mission" and rec.mission_proposal is not None:
             m = mission_from_proposal(rec.mission_proposal)
             self._b.missions[m.s256] = m
             self._store.resolve_pending(pending_id, m)
-            return
+            return DecisionResult(redirect_url=rec.callback_url)
+
         raise NotFoundError("invalid pending record")
 
     def mark_interacting(self, pending_id: str) -> None:

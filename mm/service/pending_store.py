@@ -23,8 +23,11 @@ class PendingRequestStore(ABC):
         """Create a new pending record; return `pending_id` (path segment)."""
 
     @abstractmethod
-    def get_pending(self, pending_id: str) -> PendingStoreValue:
-        """Return current deferred snapshot or terminal success (token or mission)."""
+    def get_pending(self, pending_id: str, *, for_poll: bool = False) -> PendingStoreValue:
+        """Return current deferred snapshot or terminal success (token or mission).
+
+        ``for_poll=True`` enables polling semantics (e.g. rate limiting) for GET on the pending URL.
+        """
 
     @abstractmethod
     def update_pending(
@@ -50,3 +53,11 @@ class PendingRequestStore(ABC):
     @abstractmethod
     def delete_pending(self, pending_id: str) -> None:
         """Cancel: subsequent access returns 410 Gone per protocol."""
+
+    @abstractmethod
+    def assert_agent_owns_pending(self, pending_id: str, agent_id: str) -> None:
+        """Ensure the pending row belongs to this agent (else raise NotFoundError)."""
+
+    @abstractmethod
+    def set_callback_url(self, pending_id: str, callback_url: str | None) -> None:
+        """Optional redirect after consent (protocol §User Interaction)."""

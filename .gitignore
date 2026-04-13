@@ -10,3 +10,6 @@ htmlcov/
 
 .cursor
 .claude
+
+# HWK sample client key (scripts/hwk_mm_client.py)
+scripts/.hwk-mm-client-key.pem
