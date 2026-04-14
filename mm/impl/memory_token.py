@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from mm.exceptions import ClarificationLimitError, NotFoundError
 from mm.federation.as_federator import ASFederator
+from mm.impl.backend import MMBackend, utc_now
 from mm.impl.memory_pending import MemoryPendingStore
+from mm.impl.mission_guards import require_active_mission
 from mm.models import (
     AuthTokenResponse,
     DeferredResponse,
+    InteractionTerminalResult,
     Mission,
+    MissionLogEntry,
+    MissionLogKind,
     PendingStatus,
     RequirementLevel,
     TokenOutcome,
@@ -24,17 +29,23 @@ class MemoryTokenBroker(TokenBroker):
         self,
         store: MemoryPendingStore,
         federator: ASFederator,
+        backend: MMBackend,
         *,
         agent_jwt_stub: str,
         auto_approve_without_consent: bool = False,
     ) -> None:
         self._store = store
         self._federator = federator
+        self._b = backend
         self._agent_jwt_stub = agent_jwt_stub
         self._auto = auto_approve_without_consent
 
     def request_token(self, request: TokenRequest) -> TokenOutcome:
+        if request.mission is not None:
+            require_active_mission(self._b, request.mission)
         if self._auto:
+            if request.mission is not None:
+                require_active_mission(self._b, request.mission)
             return self._federator.request_auth_token(
                 request.resource_token,
                 self._agent_jwt_stub,
@@ -47,7 +58,7 @@ class MemoryTokenBroker(TokenBroker):
             raise NotFoundError("unexpected mission outcome on token request")
         return val  # DeferredResponse
 
-    def get_pending(self, pending_id: str, agent_id: str) -> AuthTokenResponse | DeferredResponse:
+    def get_pending(self, pending_id: str, agent_id: str) -> AuthTokenResponse | DeferredResponse | InteractionTerminalResult:
         self._store.assert_agent_owns_pending(pending_id, agent_id)
         val = self._store.get_pending(pending_id, for_poll=True)
         if isinstance(val, Mission):
@@ -61,6 +72,15 @@ class MemoryTokenBroker(TokenBroker):
             raise ClarificationLimitError()
         rec.clarification_responses.append(response_text)
         rec.clarification_round += 1
+        if rec.token_request and rec.token_request.mission:
+            self._b.append_mission_log(
+                rec.token_request.mission.s256,
+                MissionLogEntry(
+                    ts=utc_now(),
+                    kind=MissionLogKind.CLARIFICATION,
+                    payload={"response": response_text},
+                ),
+            )
         self._store.update_pending(
             pending_id,
             requirement=RequirementLevel.INTERACTION,

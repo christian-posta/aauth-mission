@@ -46,11 +46,32 @@
               </tbody>
             </table>
           </div>
+          <div x-show="ctx.interaction_type">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Interaction</h2>
+            <p class="mt-1 font-mono text-sm" x-text="ctx.interaction_type"></p>
+          </div>
+          <div x-show="ctx.summary">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Summary</h2>
+            <p class="mt-1 whitespace-pre-wrap text-sm text-zinc-300" x-text="ctx.summary"></p>
+          </div>
+          <div x-show="ctx.question">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Question</h2>
+            <p class="mt-1 whitespace-pre-wrap text-sm text-zinc-300" x-text="ctx.question"></p>
+          </div>
+          <div x-show="ctx.interaction_type === 'question'" class="space-y-2">
+            <label class="text-xs text-zinc-500">Your answer</label>
+            <textarea
+              x-model="answerText"
+              rows="3"
+              class="w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-sm text-zinc-200"
+              placeholder="Type an answer for the agent…"
+            ></textarea>
+          </div>
           <div x-show="ctx.mission">
             <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Mission</h2>
             <pre
               class="mt-2 max-h-64 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300"
-              x-text="ctx.mission && ctx.mission.approved"
+              x-text="ctx.mission ? JSON.stringify(ctx.mission, null, 2) : ''"
             ></pre>
           </div>
           <div class="flex flex-wrap gap-3 pt-2" x-show="!done">
@@ -99,6 +120,7 @@
           error: "",
           done: false,
           submitting: false,
+          answerText: "",
           from: "",
           fallbackHref: "index.html",
           fallbackLabel: "Sign in",
@@ -119,7 +141,7 @@
               return;
             }
             try {
-              var r = await fetch("/interaction?code=" + encodeURIComponent(code));
+              var r = await fetch("/consent?code=" + encodeURIComponent(code));
               if (!r.ok) {
                 var j = await r.json().catch(function () {
                   return {};
@@ -138,10 +160,13 @@
             this.submitting = true;
             this.error = "";
             try {
-              var r = await fetch("/interaction/" + encodeURIComponent(this.ctx.pending_id) + "/decision", {
+              var r = await fetch("/consent/" + encodeURIComponent(this.ctx.pending_id) + "/decision", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ approved: approved }),
+                body: JSON.stringify({
+                  approved: approved,
+                  answer_text: this.answerText || null,
+                }),
               });
               if (!r.ok) {
                 var j = await r.json().catch(function () {

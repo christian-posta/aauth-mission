@@ -45,20 +45,31 @@ def test_well_known_metadata(client: TestClient) -> None:
     r = client.get("/.well-known/aauth-mission.json")
     assert r.status_code == 200
     data = r.json()
-    assert data["manager"] == "http://test.example"
+    assert data["issuer"] == "http://test.example"
     assert data["token_endpoint"] == "http://test.example/token"
     assert data["mission_endpoint"] == "http://test.example/mission"
+    assert data["permission_endpoint"] == "http://test.example/permission"
+    r2 = client.get("/.well-known/aauth-person.json")
+    assert r2.json() == data
+
+
+def _s256_from_mission_response(r) -> str:
+    m = re.search(r's256="([^"]+)"', r.headers.get("AAuth-Mission", ""))
+    assert m is not None
+    return m.group(1)
 
 
 def test_mission_create(client: TestClient) -> None:
     r = client.post(
         "/mission",
-        json={"mission_proposal": "# Test\n\nDo something."},
+        json={"description": "# Test\n\nDo something."},
         headers={"X-AAuth-Agent-Id": "agent-1"},
     )
     assert r.status_code == 200
-    m = r.json()["mission"]
-    assert "s256" in m and "approved" in m
+    assert "AAuth-Mission" in r.headers
+    blob = r.json()
+    assert "approver" in blob and "description" in blob
+    _s256_from_mission_response(r)
 
 
 def test_token_defer_consent_flow(client: TestClient) -> None:
@@ -77,12 +88,12 @@ def test_token_defer_consent_flow(client: TestClient) -> None:
     assert m is not None, req_hdr
     code = m.group(1)
 
-    r_ctx = client.get("/interaction", params={"code": code})
+    r_ctx = client.get("/consent", params={"code": code})
     assert r_ctx.status_code == 200
     pending_id = r_ctx.json()["pending_id"]
 
     r_dec = client.post(
-        f"/interaction/{pending_id}/decision",
+        f"/consent/{pending_id}/decision",
         json={"approved": True},
     )
     assert r_dec.status_code == 200
@@ -147,11 +158,11 @@ def test_user_missions_owner_and_consent(client: TestClient) -> None:
     c = TestClient(app)
     r = c.post(
         "/mission",
-        json={"mission_proposal": "# Owned\n\nMission text.", "owner_hint": "alice"},
+        json={"description": "# Owned\n\nMission text.", "owner_hint": "alice"},
         headers={"X-AAuth-Agent-Id": "agent-owned"},
     )
     assert r.status_code == 200
-    s256 = r.json()["mission"]["s256"]
+    s256 = _s256_from_mission_response(r)
 
     r_list = c.get("/user/missions", headers={"Authorization": "Bearer user-secret"})
     assert r_list.status_code == 200
@@ -196,14 +207,14 @@ def test_pending_gone_after_delete(client: TestClient) -> None:
 def test_mission_invalid_state_transition(client: TestClient) -> None:
     r = client.post(
         "/mission",
-        json={"mission_proposal": "# X\n\nY"},
+        json={"description": "# X\n\nY"},
         headers={"X-AAuth-Agent-Id": "agent-1"},
     )
     assert r.status_code == 200
-    s256 = r.json()["mission"]["s256"]
-    r2 = client.patch(f"/missions/{s256}", json={"state": "completed"})
+    s256 = _s256_from_mission_response(r)
+    r2 = client.patch(f"/missions/{s256}", json={"state": "terminated"})
     assert r2.status_code == 200
-    r3 = client.patch(f"/missions/{s256}", json={"state": "active"})
+    r3 = client.patch(f"/missions/{s256}", json={"state": "terminated"})
     assert r3.status_code == 400
 
 
@@ -218,9 +229,9 @@ def test_interaction_code_single_use(client: TestClient) -> None:
     m = re.search(r'code="([^"]+)"', req_hdr)
     assert m
     code = m.group(1)
-    r1 = client.get("/interaction", params={"code": code})
+    r1 = client.get("/consent", params={"code": code})
     assert r1.status_code == 200
-    r2 = client.get("/interaction", params={"code": code})
+    r2 = client.get("/consent", params={"code": code})
     assert r2.status_code == 410
 
 
@@ -247,3 +258,45 @@ def test_clarification_round_limit(client: TestClient) -> None:
     )
     assert pr6.status_code == 400
     assert pr6.json().get("error") == "invalid_request"
+
+
+def test_permission_and_audit(client: TestClient) -> None:
+    mr = client.post(
+        "/mission",
+        json={"description": "Demo"},
+        headers={"X-AAuth-Agent-Id": "a1"},
+    )
+    m = mr.json()
+    ref = {"approver": m["approver"], "s256": _s256_from_mission_response(mr)}
+    r = client.post(
+        "/permission",
+        json={"action": "WebSearch", "mission": ref},
+        headers={"X-AAuth-Agent-Id": "a1"},
+    )
+    assert r.status_code == 200
+    assert r.json()["permission"] == "granted"
+    ra = client.post(
+        "/audit",
+        json={"mission": ref, "action": "WebSearch", "result": {"ok": True}},
+        headers={"X-AAuth-Agent-Id": "a1"},
+    )
+    assert ra.status_code == 201
+
+
+def test_mission_terminated_on_token(client: TestClient) -> None:
+    mr = client.post(
+        "/mission",
+        json={"description": "X"},
+        headers={"X-AAuth-Agent-Id": "a2"},
+    )
+    m = mr.json()
+    s256 = _s256_from_mission_response(mr)
+    ref = {"approver": m["approver"], "s256": s256}
+    client.patch(f"/missions/{s256}", json={"state": "terminated"})
+    r = client.post(
+        "/token",
+        json={"resource_token": "jwt", "mission": ref},
+        headers={"X-AAuth-Agent-Id": "a2"},
+    )
+    assert r.status_code == 403
+    assert r.json()["error"] == "mission_terminated"

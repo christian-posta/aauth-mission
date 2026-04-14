@@ -74,9 +74,12 @@ class MMHttpSettings(BaseSettings):
         o = self.public_origin.rstrip("/")
         jwks = self.jwks_uri or f"{o}/.well-known/jwks.json"
         return MMMetadata(
-            manager=o,
+            issuer=o,
             token_endpoint=f"{o}/token",
             mission_endpoint=f"{o}/mission",
+            permission_endpoint=f"{o}/permission",
+            audit_endpoint=f"{o}/audit",
+            interaction_endpoint=f"{o}/interaction",
             mission_control_endpoint=f"{o}/missions",
             jwks_uri=jwks,
         )

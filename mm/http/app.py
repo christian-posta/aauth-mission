@@ -1,15 +1,15 @@
-"""FastAPI application exposing the MM REST API (plan Layer 4 + draft-hardt-aauth-protocol)."""
+"""FastAPI application exposing the MM REST API (SPEC.md aligned)."""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from aauth import errors as aauth_errors
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
@@ -23,7 +23,6 @@ from mm.api.agent_routes import (
     request_token_route,
 )
 from mm.api.admin_routes import get_mission_route, list_missions_route, patch_mission
-from mm.api.metadata import get_mm_metadata
 from mm.api.user_mission_routes import (
     get_user_mission_route,
     list_user_missions_route,
@@ -35,6 +34,7 @@ from mm.exceptions import (
     ClarificationLimitError,
     ForbiddenOwnerError,
     InvalidInteractionCodeError,
+    MissionTerminatedError,
     NotFoundError,
     PendingDeniedError,
     PendingExpiredError,
@@ -48,18 +48,26 @@ from mm.http.encoding import (
     build_aauth_requirement_header,
     consent_context_http_dict,
     deferred_body_dict,
-    mission_http_dict,
+    mission_detail_dict,
+    mission_list_dict,
     mission_state_from_query,
 )
 from mm.http.errors import aauth_json_error
+from mm.http.mission_header import build_aauth_mission_response_header, parse_aauth_mission_header
 from mm.impl import MMContainer, build_memory_mm
 from mm.models import (
+    AgentInteractionRequest,
+    AuditRequest,
     AuthTokenResponse,
     DeferredResponse,
+    InteractionTerminalResult,
     Mission,
     MissionProposal,
+    MissionRef,
     MissionState,
+    PermissionRequest,
     TokenRequest,
+    ToolSpec,
     UserDecision,
 )
 from mm.utils.sanitize import sanitize_markdown_input
@@ -67,8 +75,19 @@ from mm.utils.sanitize import sanitize_markdown_input
 logger = logging.getLogger(__name__)
 
 
+class ToolBody(BaseModel):
+    name: str
+    description: str
+
+
+class MissionRefBody(BaseModel):
+    approver: str
+    s256: str
+
+
 class MissionProposalBody(BaseModel):
-    mission_proposal: str = Field(..., description="Markdown mission text per protocol")
+    description: str = Field(..., description="Markdown mission description (SPEC)")
+    tools: list[ToolBody] | None = None
     owner_hint: str | None = Field(
         default=None,
         description="Legal owner id for mission control / consent scoping.",
@@ -82,6 +101,7 @@ class TokenRequestBody(BaseModel):
     login_hint: str | None = None
     tenant: str | None = None
     domain_hint: str | None = None
+    mission: MissionRefBody | None = None
 
 
 class PendingPostBody(BaseModel):
@@ -101,14 +121,47 @@ class PendingPostBody(BaseModel):
 class UserDecisionBody(BaseModel):
     approved: bool
     clarification_question: str | None = None
+    answer_text: str | None = None
 
 
 class MissionPatchBody(BaseModel):
-    state: MissionState
+    state: Literal[MissionState.TERMINATED]
+
+
+class PermissionBody(BaseModel):
+    action: str
+    description: str | None = None
+    parameters: dict[str, Any] | None = None
+    mission: MissionRefBody | None = None
+
+
+class AuditBody(BaseModel):
+    mission: MissionRefBody
+    action: str
+    description: str | None = None
+    parameters: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+
+
+class AgentInteractionBody(BaseModel):
+    type: Literal["interaction", "payment", "question", "completion"]
+    description: str | None = None
+    url: str | None = None
+    code: str | None = None
+    question: str | None = None
+    summary: str | None = None
+    mission: MissionRefBody | None = None
 
 
 def _is_agent_protocol_path(path: str) -> bool:
-    return path.startswith("/mission") or path.startswith("/token") or path.startswith("/pending")
+    return (
+        path.startswith("/mission")
+        or path.startswith("/token")
+        or path.startswith("/pending")
+        or path.startswith("/permission")
+        or path.startswith("/audit")
+        or path == "/interaction"
+    )
 
 
 def _json_deferred(d: DeferredResponse) -> JSONResponse:
@@ -123,39 +176,34 @@ def _json_deferred(d: DeferredResponse) -> JSONResponse:
     return JSONResponse(status_code=202, content=deferred_body_dict(d), headers=headers)
 
 
-def _token_outcome_response(out: AuthTokenResponse | DeferredResponse | Mission) -> JSONResponse:
+def _token_outcome_response(
+    out: AuthTokenResponse | DeferredResponse | Mission | InteractionTerminalResult,
+) -> JSONResponse:
     if isinstance(out, AuthTokenResponse):
         return JSONResponse(auth_token_http_dict(out))
     if isinstance(out, Mission):
-        return JSONResponse({"mission": mission_http_dict(out)})
+        raise RuntimeError("unexpected mission on token flow")
+    if isinstance(out, InteractionTerminalResult):
+        return JSONResponse(out.body)
     return _json_deferred(out)
 
 
-def _mission_outcome_response(out: Mission | DeferredResponse) -> JSONResponse:
+def _mission_approval_response(m: Mission) -> Response:
+    hdr = build_aauth_mission_response_header(m.approver, m.s256)
+    return Response(
+        content=m.blob_bytes,
+        media_type="application/json",
+        headers={
+            "AAuth-Mission": hdr,
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _mission_outcome_response(out: Mission | DeferredResponse) -> Response | JSONResponse:
     if isinstance(out, Mission):
-        return JSONResponse({"mission": mission_http_dict(out)})
+        return _mission_approval_response(out)
     return _json_deferred(out)
-
-
-def _mission_list_item(m: Mission) -> dict[str, Any]:
-    return {
-        "s256": m.s256,
-        "approved": m.approved_text,
-        "state": m.state.value,
-        "agent_id": m.agent_id,
-        "created_at": m.created_at.isoformat(),
-        "owner_id": m.owner_id,
-    }
-
-
-def _mission_detail(m: Mission) -> dict[str, Any]:
-    return {
-        "mission": mission_http_dict(m),
-        "state": m.state.value,
-        "agent_id": m.agent_id,
-        "created_at": m.created_at.isoformat(),
-        "owner_id": m.owner_id,
-    }
 
 
 def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
@@ -171,10 +219,21 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
     app = FastAPI(
         title="AAuth Mission Manager",
         version="0.1.0",
-        description="Simple in-memory MM REST API (draft-hardt-aauth-protocol).",
+        description="In-memory MM / PS reference API (SPEC.md).",
     )
     app.state.settings = settings
     app.state.mm = mm
+
+    meta = settings.metadata()
+
+    @app.exception_handler(MissionTerminatedError)
+    async def mission_terminated_handler(
+        _request: Request, _exc: MissionTerminatedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "mission_terminated", "mission_status": "terminated"},
+        )
 
     @app.exception_handler(InvalidInteractionCodeError)
     async def invalid_interaction_code_handler(
@@ -245,16 +304,26 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
             return JSONResponse(status_code=503, content={"detail": exc.detail})
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-    @app.get("/.well-known/aauth-mission.json")
-    def well_known():
-        meta = get_mm_metadata(settings.metadata())
+    def _well_known_payload() -> dict[str, Any]:
         return {
-            "manager": meta.manager,
+            "issuer": meta.issuer,
             "token_endpoint": meta.token_endpoint,
             "mission_endpoint": meta.mission_endpoint,
+            "permission_endpoint": meta.permission_endpoint,
+            "audit_endpoint": meta.audit_endpoint,
+            "interaction_endpoint": meta.interaction_endpoint,
             "mission_control_endpoint": meta.mission_control_endpoint,
             "jwks_uri": meta.jwks_uri,
         }
+
+    @app.get("/.well-known/aauth-person.json")
+    def well_known_person():
+        return _well_known_payload()
+
+    @app.get("/.well-known/aauth-mission.json")
+    def well_known_mission_alias():
+        """Backward-compatible alias; same document as aauth-person.json."""
+        return _well_known_payload()
 
     @app.get("/.well-known/jwks.json")
     def jwks_placeholder():
@@ -269,9 +338,13 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
         prefer = parse_prefer_wait(request.headers.get("prefer"))
         if prefer is not None:
             logger.debug("POST /mission Prefer: wait=%s (long-poll not implemented)", prefer)
+        tools: tuple[ToolSpec, ...] = ()
+        if body.tools:
+            tools = tuple(ToolSpec(name=t.name, description=t.description) for t in body.tools)
         proposal = MissionProposal(
             agent_id=agent_id,
-            proposal_text=sanitize_markdown_input(body.mission_proposal),
+            description=sanitize_markdown_input(body.description),
+            tools=tools,
             owner_hint=body.owner_hint,
         )
         out = create_mission_route(mm.lifecycle, proposal)
@@ -287,6 +360,12 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
         if prefer is not None:
             logger.debug("POST /token Prefer: wait=%s (long-poll not implemented)", prefer)
         just = sanitize_markdown_input(body.justification) if body.justification else None
+        mref: MissionRef | None = None
+        if body.mission is not None:
+            mref = MissionRef(approver=body.mission.approver, s256=body.mission.s256)
+        hdr_m = parse_aauth_mission_header(request.headers.get("aauth-mission"))
+        if mref is None and hdr_m is not None:
+            mref = hdr_m
         req = TokenRequest(
             agent_id=agent_id,
             resource_token=body.resource_token,
@@ -295,9 +374,74 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
             login_hint=body.login_hint,
             tenant=body.tenant,
             domain_hint=body.domain_hint,
+            mission=mref,
         )
         out = request_token_route(mm.token_broker, req)
         return _token_outcome_response(out)
+
+    @app.post("/permission")
+    async def post_permission(
+        body: PermissionBody,
+        agent_id: Annotated[str, Depends(require_agent_id)],
+    ):
+        mref = MissionRef(approver=body.mission.approver, s256=body.mission.s256) if body.mission else None
+        req = PermissionRequest(
+            action=body.action,
+            description=sanitize_markdown_input(body.description) if body.description else None,
+            parameters=body.parameters,
+            mission=mref,
+            agent_id=agent_id,
+        )
+        try:
+            out = mm.governance.post_permission(req)
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"permission": out.permission, **({"reason": out.reason} if out.reason else {})}
+
+    @app.post("/audit", status_code=201)
+    async def post_audit(
+        body: AuditBody,
+        agent_id: Annotated[str, Depends(require_agent_id)],
+    ):
+        req = AuditRequest(
+            mission=MissionRef(approver=body.mission.approver, s256=body.mission.s256),
+            action=body.action,
+            description=sanitize_markdown_input(body.description) if body.description else None,
+            parameters=body.parameters,
+            result=body.result,
+            agent_id=agent_id,
+        )
+        try:
+            mm.governance.post_audit(req)
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return Response(status_code=201)
+
+    @app.post("/interaction")
+    async def post_agent_interaction(
+        body: AgentInteractionBody,
+        agent_id: Annotated[str, Depends(require_agent_id)],
+    ):
+        mref = (
+            MissionRef(approver=body.mission.approver, s256=body.mission.s256) if body.mission else None
+        )
+        req = AgentInteractionRequest(
+            type=body.type,
+            description=sanitize_markdown_input(body.description) if body.description else None,
+            url=body.url,
+            code=body.code,
+            question=sanitize_markdown_input(body.question) if body.question else None,
+            summary=sanitize_markdown_input(body.summary) if body.summary else None,
+            mission=mref,
+            agent_id=agent_id,
+        )
+        try:
+            d = mm.governance.post_agent_interaction(req)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except NotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return _json_deferred(d)
 
     @app.get("/pending/{pending_id}")
     async def get_pending(
@@ -333,8 +477,8 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
     async def delete_pending(pending_id: str, agent_id: Annotated[str, Depends(require_agent_id)]):
         cancel_pending_route(mm.token_broker, pending_id, agent_id)
 
-    @app.get("/interaction")
-    def get_interaction(
+    @app.get("/consent")
+    def get_consent(
         code: str,
         settings: Annotated[MMHttpSettings, Depends(get_settings)],
         callback: str | None = None,
@@ -346,11 +490,11 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
         mm.user_consent.mark_interacting(ctx.pending_id)
         return consent_context_http_dict(ctx)
 
-    @app.post("/interaction/{pending_id}/decision")
-    def post_decision(pending_id: str, body: UserDecisionBody):
+    def _consent_decision_impl(pending_id: str, body: UserDecisionBody) -> JSONResponse:
         decision = UserDecision(
             approved=body.approved,
             clarification_question=body.clarification_question,
+            answer_text=body.answer_text,
         )
         try:
             result = post_decision_route(mm.user_consent, pending_id, decision)
@@ -361,6 +505,29 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
             payload["redirect_url"] = result.redirect_url
         return JSONResponse(status_code=200, content=payload)
 
+    @app.post("/consent/{pending_id}/decision")
+    def post_consent_decision(pending_id: str, body: UserDecisionBody):
+        return _consent_decision_impl(pending_id, body)
+
+    @app.get("/interaction", include_in_schema=False)
+    def get_interaction_legacy(
+        code: str,
+        settings: Annotated[MMHttpSettings, Depends(get_settings)],
+        callback: str | None = None,
+    ):
+        """Legacy alias for GET /consent (user-facing consent context)."""
+        if settings.require_user_session:
+            pass
+        ctx = get_interaction_route(mm.user_consent, code)
+        mm.pending_store.set_callback_url(ctx.pending_id, callback)
+        mm.user_consent.mark_interacting(ctx.pending_id)
+        return consent_context_http_dict(ctx)
+
+    @app.post("/interaction/{pending_id}/decision", include_in_schema=False)
+    def post_interaction_legacy(pending_id: str, body: UserDecisionBody):
+        """Legacy alias for POST /consent/{pending_id}/decision."""
+        return _consent_decision_impl(pending_id, body)
+
     @app.get("/missions")
     def list_missions(
         _admin: Annotated[None, Depends(require_admin)],
@@ -369,15 +536,20 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
     ) -> list[dict[str, Any]]:
         st = mission_state_from_query(state)
         missions = list_missions_route(mm.mission_control, agent_id, st)
-        return [_mission_list_item(m) for m in missions]
+        return [mission_list_dict(m) for m in missions]
 
     @app.get("/missions/{s256}")
     def inspect_mission(s256: str, _admin: Annotated[None, Depends(require_admin)]):
         try:
             m = get_mission_route(mm.mission_control, s256)
+            log = mm.mission_control.mission_log(s256)
         except NotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        return _mission_detail(m)
+        detail = mission_detail_dict(m)
+        detail["log"] = [
+            {"ts": e.ts.isoformat(), "kind": e.kind.value, "payload": e.payload} for e in log
+        ]
+        return detail
 
     @app.patch("/missions/{s256}")
     def patch_mission_route(s256: str, body: MissionPatchBody, _admin: Annotated[None, Depends(require_admin)]):
@@ -387,22 +559,27 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        return _mission_detail(m)
+        return mission_detail_dict(m)
 
     @app.get("/user/missions")
     def list_user_missions(user_id: Annotated[str, Depends(require_user)]) -> list[dict[str, Any]]:
         missions = list_user_missions_route(mm.mission_control, user_id)
-        return [_mission_list_item(m) for m in missions]
+        return [mission_list_dict(m) for m in missions]
 
     @app.get("/user/missions/{s256}")
     def inspect_user_mission(s256: str, user_id: Annotated[str, Depends(require_user)]):
         try:
             m = get_user_mission_route(mm.mission_control, s256, user_id)
+            log = mm.mission_control.mission_log(s256)
         except NotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ForbiddenOwnerError:
             raise
-        return _mission_detail(m)
+        detail = mission_detail_dict(m)
+        detail["log"] = [
+            {"ts": e.ts.isoformat(), "kind": e.kind.value, "payload": e.payload} for e in log
+        ]
+        return detail
 
     @app.patch("/user/missions/{s256}")
     def patch_user_mission_http(
@@ -416,7 +593,7 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
             raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        return _mission_detail(m)
+        return mission_detail_dict(m)
 
     @app.get("/user/consent")
     def list_user_consent(user_id: Annotated[str, Depends(require_user)]) -> list[dict[str, Any]]:
@@ -424,7 +601,6 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
 
     @app.get("/admin/pending")
     def admin_list_pending(_admin: Annotated[None, Depends(require_admin)]) -> list[dict[str, Any]]:
-        """All open pending token/mission flows (admin console)."""
         return mm.pending_store.list_open_pending_for_admin()
 
     static_dir = Path(__file__).resolve().parent / "static"

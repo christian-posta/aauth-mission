@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from mm.models import Mission, MissionState
+from mm.models import Mission, MissionLogEntry, MissionState
 
 
 class MissionControl(ABC):
@@ -20,20 +20,12 @@ class MissionControl(ABC):
 
     @abstractmethod
     def inspect_mission(self, s256: str) -> Mission:
-        """Detail view including delegation/audit (implementation-defined)."""
+        """Detail view."""
 
     @abstractmethod
-    def suspend_mission(self, s256: str) -> Mission:
-        """Set mission to suspended."""
+    def mission_log(self, s256: str) -> list[MissionLogEntry]:
+        """Ordered mission log entries."""
 
     @abstractmethod
-    def resume_mission(self, s256: str) -> Mission:
-        """Resume from suspended to active."""
-
-    @abstractmethod
-    def revoke_mission(self, s256: str) -> Mission:
-        """Terminal revoke."""
-
-    @abstractmethod
-    def complete_mission(self, s256: str) -> Mission:
-        """Terminal complete."""
+    def terminate_mission(self, s256: str) -> Mission:
+        """Set mission to terminated (only transition from active)."""

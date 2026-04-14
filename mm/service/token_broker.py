@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from mm.models import AuthTokenResponse, DeferredResponse, PendingPollOutcome, TokenOutcome, TokenRequest
+from mm.models import (
+    AuthTokenResponse,
+    DeferredResponse,
+    InteractionTerminalResult,
+    PendingPollOutcome,
+    TokenOutcome,
+    TokenRequest,
+)
 
 
 class TokenBroker(ABC):
@@ -16,7 +23,7 @@ class TokenBroker(ABC):
 
     @abstractmethod
     def get_pending(self, pending_id: str, agent_id: str) -> PendingPollOutcome:
-        """GET pending URL — poll until 200 or terminal error."""
+        """GET pending URL — poll until 200 or terminal error (token or interaction result)."""
 
     @abstractmethod
     def post_clarification_response(self, pending_id: str, agent_id: str, response_text: str) -> DeferredResponse:

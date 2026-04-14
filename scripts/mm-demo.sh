@@ -57,8 +57,12 @@ http_status_from_file() {
   head -1 "$1" | sed -n 's:^HTTP/[^ ]* \([0-9]*\).*:\1:p'
 }
 
+parse_s256_from_headers() {
+  # stdin: raw response headers; extract s256 from AAuth-Mission
+  grep -i '^AAuth-Mission:' | head -1 | sed -n 's/.*s256="\([^"]*\)".*/\1/p'
+}
+
 main() {
-  # Must be global (not `local`): EXIT trap runs outside this function and cannot see locals.
   MM_DEMO_TMPDIR=$(mktemp -d)
   trap 'rm -rf "${MM_DEMO_TMPDIR:-}"' EXIT
 
@@ -67,26 +71,67 @@ main() {
     sub "(install jq for prettier JSON: brew install jq)"
   fi
 
-  # --- Well-known ---
-  print_req "GET" "${BASE_URL}/.well-known/aauth-mission.json"
-  curl -sS -i "${BASE_URL}/.well-known/aauth-mission.json" | print_res
+  # --- Well-known (SPEC: aauth-person.json) ---
+  print_req "GET" "${BASE_URL}/.well-known/aauth-person.json"
+  curl -sS -i "${BASE_URL}/.well-known/aauth-person.json" | print_res
 
-  # --- Mission ---
-  local body_mission='{"mission_proposal":"# Demo mission\n\nManual script exercise."}'
+  # --- Mission (description + tools) ---
+  local body_mission
+  body_mission='{"description":"# Demo mission\n\nManual script exercise.","tools":[{"name":"WebSearch","description":"Search the web"}]}'
   print_req "POST" "${BASE_URL}/mission" "X-AAuth-Agent-Id: ${AGENT_ID}" "$body_mission"
-  curl -sS -i -X POST "${BASE_URL}/mission" \
+  local mission_hdr="${MM_DEMO_TMPDIR}/mission.headers"
+  curl -sS -D "$mission_hdr" -o "${MM_DEMO_TMPDIR}/mission.json" -X POST "${BASE_URL}/mission" \
     -H "Content-Type: application/json" \
     -H "X-AAuth-Agent-Id: ${AGENT_ID}" \
-    -d "$body_mission" | print_res
+    -d "$body_mission"
+  say "Response"
+  sed 's/^/  /' "$mission_hdr"
+  if have_jq; then
+    jq . "${MM_DEMO_TMPDIR}/mission.json" | sed 's/^/  /'
+  else
+    sed 's/^/  /' "${MM_DEMO_TMPDIR}/mission.json"
+  fi
 
-  # --- Token → deferred ---
-  local body_token='{"resource_token":"aa-resource.demo-token","justification":"Demo access"}'
-  print_req "POST" "${BASE_URL}/token" "X-AAuth-Agent-Id: ${AGENT_ID}" "$body_token"
+  local approver s256 hdr_line
+  hdr_line=$(grep -i '^AAuth-Mission:' "$mission_hdr" | tr -d '\r' || true)
+  approver=$(printf '%s' "$hdr_line" | sed -n 's/.*approver="\([^"]*\)".*/\1/p')
+  s256=$(printf '%s' "$hdr_line" | sed -n 's/.*s256="\([^"]*\)".*/\1/p')
+  say "Extracted approver=${approver}"
+  say "Extracted s256=${s256}"
+
+  local mission_json
+  mission_json=$(cat "${MM_DEMO_TMPDIR}/mission.json")
+  local aauth_hdr
+  aauth_hdr="AAuth-Mission: approver=\"${approver}\"; s256=\"${s256}\""
+
+  # --- Permission (optional mission) ---
+  local body_perm
+  body_perm=$(printf '{"action":"WebSearch","description":"Search for demo","mission":{"approver":"%s","s256":"%s"}}' "$approver" "$s256")
+  print_req "POST" "${BASE_URL}/permission" "X-AAuth-Agent-Id: ${AGENT_ID}" "$body_perm"
+  curl -sS -i -X POST "${BASE_URL}/permission" \
+    -H "Content-Type: application/json" \
+    -H "X-AAuth-Agent-Id: ${AGENT_ID}" \
+    -d "$body_perm" | print_res
+
+  # --- Audit ---
+  local body_audit
+  body_audit=$(printf '{"mission":{"approver":"%s","s256":"%s"},"action":"WebSearch","description":"Ran search","result":{"n":1}}' "$approver" "$s256")
+  print_req "POST" "${BASE_URL}/audit" "X-AAuth-Agent-Id: ${AGENT_ID}" "$body_audit"
+  curl -sS -i -X POST "${BASE_URL}/audit" \
+    -H "Content-Type: application/json" \
+    -H "X-AAuth-Agent-Id: ${AGENT_ID}" \
+    -d "$body_audit" | print_res
+
+  # --- Token → deferred (with AAuth-Mission header) ---
+  local body_token
+  body_token='{"resource_token":"aa-resource.demo-token","justification":"Demo access"}'
+  print_req "POST" "${BASE_URL}/token" "X-AAuth-Agent-Id: ${AGENT_ID}; ${aauth_hdr}" "$body_token"
 
   local full="${MM_DEMO_TMPDIR}/token.i"
   curl -sS -i -X POST "${BASE_URL}/token" \
     -H "Content-Type: application/json" \
     -H "X-AAuth-Agent-Id: ${AGENT_ID}" \
+    -H "$aauth_hdr" \
     -d "$body_token" >"$full"
 
   local HTTP_STATUS
@@ -119,10 +164,10 @@ main() {
   say "Extracted Location (pending URL): ${pending_url}"
   say "Extracted interaction code: ${code_val}"
 
-  # --- Interaction context (single GET; interaction code is single-use) ---
+  # --- Consent context (single GET; interaction code is single-use) ---
   local pending_json="${MM_DEMO_TMPDIR}/interaction.json"
-  print_req "GET" "${BASE_URL}/interaction?code=${code_val}"
-  curl -sS "${BASE_URL}/interaction?code=${code_val}" >"$pending_json"
+  print_req "GET" "${BASE_URL}/consent?code=${code_val}"
+  curl -sS "${BASE_URL}/consent?code=${code_val}" >"$pending_json"
   say "Response"
   if have_jq; then
     jq . "$pending_json" | sed 's/^/  /'
@@ -137,15 +182,15 @@ main() {
     pid=$(grep -oE '"pending_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$pending_json" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
   fi
   if [[ -z "$pid" || "$pid" == "null" ]]; then
-    say "Could not parse pending_id from interaction JSON"
+    say "Could not parse pending_id from consent JSON"
     cat "$pending_json"
     exit 1
   fi
 
   # --- User approves ---
   local body_dec='{"approved":true}'
-  print_req "POST" "${BASE_URL}/interaction/${pid}/decision" "Content-Type: application/json" "$body_dec"
-  curl -sS -i -X POST "${BASE_URL}/interaction/${pid}/decision" \
+  print_req "POST" "${BASE_URL}/consent/${pid}/decision" "Content-Type: application/json" "$body_dec"
+  curl -sS -i -X POST "${BASE_URL}/consent/${pid}/decision" \
     -H "Content-Type: application/json" \
     -d "$body_dec" | print_res
 

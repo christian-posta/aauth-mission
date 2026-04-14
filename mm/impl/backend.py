@@ -8,9 +8,10 @@ from typing import Literal
 
 from mm.models import (
     AuthTokenResponse,
+    InteractionTerminalResult,
     Mission,
+    MissionLogEntry,
     MissionProposal,
-    MissionState,
     PendingStatus,
     RequirementLevel,
     TokenRequest,
@@ -25,7 +26,7 @@ def utc_now() -> datetime:
 class PendingRecord:
     pending_id: str
     interaction_code: str
-    kind: Literal["token", "mission"]
+    kind: Literal["token", "mission", "interaction"]
     created_at: datetime = field(default_factory=utc_now)
     ttl_seconds: int = 600
     token_request: TokenRequest | None = None
@@ -36,7 +37,16 @@ class PendingRecord:
     clarification: str | None = None
     timeout: int | None = None
     options: list[str] | None = None
-    terminal: AuthTokenResponse | Mission | None = None
+    terminal: AuthTokenResponse | Mission | InteractionTerminalResult | None = None
+    # Agent-facing interaction pending (POST /interaction)
+    interaction_type: str | None = None
+    interaction_summary: str | None = None
+    interaction_question: str | None = None
+    relay_url: str | None = None
+    relay_code: str | None = None
+    mission_s256: str | None = None
+    pending_agent_id: str | None = None
+    interaction_description: str | None = None
     failure: str | None = None
     gone: bool = False
     delivered: bool = False
@@ -49,5 +59,9 @@ class PendingRecord:
 @dataclass
 class MMBackend:
     missions: dict[str, Mission] = field(default_factory=dict)
+    mission_log: dict[str, list[MissionLogEntry]] = field(default_factory=dict)
     pending: dict[str, PendingRecord] = field(default_factory=dict)
     code_index: dict[str, str] = field(default_factory=dict)  # interaction code -> pending_id
+
+    def append_mission_log(self, s256: str, entry: MissionLogEntry) -> None:
+        self.mission_log.setdefault(s256, []).append(entry)

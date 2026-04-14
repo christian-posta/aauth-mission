@@ -21,13 +21,7 @@ def get_mission_route(control: MissionControl, s256: str) -> Mission:
 
 
 def patch_mission(control: MissionControl, s256: str, new_state: MissionState) -> Mission:
-    """PATCH `/missions/{s256}` with body `{ "state": "<MissionState value>" }`."""
-    if new_state is MissionState.SUSPENDED:
-        return control.suspend_mission(s256)
-    if new_state is MissionState.ACTIVE:
-        return control.resume_mission(s256)
-    if new_state is MissionState.REVOKED:
-        return control.revoke_mission(s256)
-    if new_state is MissionState.COMPLETED:
-        return control.complete_mission(s256)
-    raise ValueError(f"PATCH not supported for target state: {new_state!r}")
+    """PATCH `/missions/{s256}` with body `{ "state": "terminated" }`."""
+    if new_state is MissionState.TERMINATED:
+        return control.terminate_mission(s256)
+    raise ValueError(f"PATCH only supports target state terminated, got: {new_state!r}")

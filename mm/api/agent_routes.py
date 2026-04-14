@@ -13,7 +13,7 @@ from mm.service.token_broker import TokenBroker
 
 
 def create_mission_route(lifecycle: MissionLifecycle, proposal: MissionProposal) -> MissionOutcome:
-    """POST `/mission` — signed body contains `mission_proposal` (mapped to `proposal_text`)."""
+    """POST `/mission` — body uses `description` and optional `tools` (SPEC)."""
     return lifecycle.create_mission(proposal)
 
 

@@ -12,6 +12,7 @@ from mm.impl.memory_control import MemoryMissionControl
 from mm.impl.memory_lifecycle import MemoryMissionLifecycle
 from mm.impl.memory_pending import MemoryPendingStore
 from mm.impl.memory_token import MemoryTokenBroker
+from mm.impl.ps_governance import PsGovernance
 from mm.service.mission_control import MissionControl
 from mm.service.mission_lifecycle import MissionLifecycle
 from mm.service.token_broker import TokenBroker
@@ -27,6 +28,7 @@ class MMContainer:
     token_broker: TokenBroker
     user_consent: UserConsent
     mission_control: MissionControl
+    governance: PsGovernance
 
 
 def build_memory_mm(
@@ -46,14 +48,17 @@ def build_memory_mm(
         default_ttl_seconds=pending_ttl_seconds,
     )
     federator = FakeASFederator()
+    governance = PsGovernance(backend, store, ps_issuer=origin)
     lifecycle = MemoryMissionLifecycle(
         backend,
         store,
+        ps_issuer=origin,
         auto_approve_mission=auto_approve_mission,
     )
     token_broker = MemoryTokenBroker(
         store,
         federator,
+        backend,
         agent_jwt_stub=agent_jwt_stub,
         auto_approve_without_consent=auto_approve_token,
     )
@@ -62,6 +67,7 @@ def build_memory_mm(
         store,
         federator,
         agent_jwt_stub=agent_jwt_stub,
+        ps_issuer=origin,
     )
     control = MemoryMissionControl(backend)
     return MMContainer(
@@ -72,4 +78,5 @@ def build_memory_mm(
         token_broker=token_broker,
         user_consent=consent,
         mission_control=control,
+        governance=governance,
     )

@@ -18,6 +18,7 @@ from mm.impl.backend import MMBackend, PendingRecord, utc_now
 from mm.models import (
     AuthTokenResponse,
     DeferredResponse,
+    InteractionTerminalResult,
     Mission,
     MissionProposal,
     PendingStatus,
@@ -35,7 +36,7 @@ def _pending_path(pending_id: str) -> str:
     return f"/pending/{pending_id}"
 
 
-# Human consent entry (browser). Loads `/ui/consent.html?code=...`; that page calls `GET /interaction?code=...`.
+# Human consent entry (browser). Loads `/ui/consent.html?code=...`; that page calls `GET /consent?code=...`.
 CONSENT_UI_PATH = "/ui/consent.html"
 
 
@@ -89,6 +90,41 @@ class MemoryPendingStore(PendingRequestStore):
         self._b.code_index[code] = pending_id
         return pending_id
 
+    def create_interaction_pending(
+        self,
+        *,
+        agent_id: str,
+        interaction_type: str,
+        owner_id: str | None,
+        mission_s256: str | None,
+        summary: str | None = None,
+        question: str | None = None,
+        relay_url: str | None = None,
+        relay_code: str | None = None,
+        description: str | None = None,
+    ) -> str:
+        """Deferred user step for POST /interaction (agent-facing)."""
+        pending_id = secrets.token_urlsafe(12).replace("-", "")[:16]
+        code = secrets.token_urlsafe(16)
+        rec = PendingRecord(
+            pending_id=pending_id,
+            interaction_code=code,
+            kind="interaction",
+            ttl_seconds=self._default_ttl_seconds,
+            owner_id=owner_id,
+            pending_agent_id=agent_id,
+            interaction_type=interaction_type,
+            interaction_summary=summary,
+            interaction_question=question,
+            relay_url=relay_url,
+            relay_code=relay_code,
+            mission_s256=mission_s256,
+            interaction_description=description,
+        )
+        self._b.pending[pending_id] = rec
+        self._b.code_index[code] = pending_id
+        return pending_id
+
     def _require(self, pending_id: str) -> PendingRecord:
         rec = self._b.pending.get(pending_id)
         if rec is None:
@@ -106,6 +142,10 @@ class MemoryPendingStore(PendingRequestStore):
             aid = rec.token_request.agent_id
         elif rec.mission_proposal is not None:
             aid = rec.mission_proposal.agent_id
+        elif rec.pending_agent_id is not None:
+            aid = rec.pending_agent_id
+        else:
+            aid = None
         if aid is None or aid != agent_id:
             raise NotFoundError("unknown pending id")
 
@@ -211,7 +251,9 @@ class MemoryPendingStore(PendingRequestStore):
         rec = self._require(pending_id)
         rec.callback_url = callback_url
 
-    def resolve_pending(self, pending_id: str, result: AuthTokenResponse | Mission) -> None:
+    def resolve_pending(
+        self, pending_id: str, result: AuthTokenResponse | Mission | InteractionTerminalResult
+    ) -> None:
         rec = self._require(pending_id)
         rec.terminal = result
         rec.failure = None
@@ -260,6 +302,8 @@ class MemoryPendingStore(PendingRequestStore):
                 agent_id = rec.token_request.agent_id
             elif rec.mission_proposal is not None:
                 agent_id = rec.mission_proposal.agent_id
+            elif rec.pending_agent_id is not None:
+                agent_id = rec.pending_agent_id
             req_val = rec.requirement.value if rec.requirement is not None else None
             st_val = rec.status.value
             code = rec.interaction_code if rec.requirement == RequirementLevel.INTERACTION else None

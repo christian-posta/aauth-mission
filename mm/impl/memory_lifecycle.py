@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from mm.exceptions import NotFoundError
-from mm.impl.backend import MMBackend
+from mm.impl.backend import MMBackend, utc_now
 from mm.impl.memory_pending import MemoryPendingStore
 from mm.impl.mission_utils import mission_from_proposal
-from mm.models import Mission, MissionOutcome, MissionProposal, MissionState, RequirementLevel
+from mm.models import (
+    Mission,
+    MissionLogEntry,
+    MissionLogKind,
+    MissionOutcome,
+    MissionProposal,
+    RequirementLevel,
+)
 from mm.service.mission_lifecycle import MissionLifecycle
 
 
@@ -18,16 +23,25 @@ class MemoryMissionLifecycle(MissionLifecycle):
         backend: MMBackend,
         pending_store: MemoryPendingStore,
         *,
+        ps_issuer: str,
         auto_approve_mission: bool = True,
     ) -> None:
         self._b = backend
         self._pending = pending_store
+        self._ps_issuer = ps_issuer.rstrip("/")
         self._auto_approve_mission = auto_approve_mission
+
+    def _record_mission(self, m: Mission) -> None:
+        self._b.missions[m.s256] = m
+        self._b.append_mission_log(
+            m.s256,
+            MissionLogEntry(ts=utc_now(), kind=MissionLogKind.MISSION_APPROVED, payload={"agent_id": m.agent_id}),
+        )
 
     def create_mission(self, proposal: MissionProposal) -> MissionOutcome:
         if self._auto_approve_mission:
-            m = mission_from_proposal(proposal)
-            self._b.missions[m.s256] = m
+            m = mission_from_proposal(proposal, self._ps_issuer)
+            self._record_mission(m)
             return m
         pid = self._pending.create_pending(proposal)
         self._pending.update_pending(pid, requirement=RequirementLevel.INTERACTION)
@@ -41,9 +55,3 @@ class MemoryMissionLifecycle(MissionLifecycle):
         if m is None:
             raise NotFoundError("unknown mission")
         return m
-
-    def update_mission_state(self, s256: str, new_state: MissionState) -> Mission:
-        m = self.get_mission(s256)
-        updated = replace(m, state=new_state)
-        self._b.missions[s256] = updated
-        return updated

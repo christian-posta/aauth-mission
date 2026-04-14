@@ -48,3 +48,9 @@ class InvalidInteractionCodeError(Exception):
     """Unknown or already-used interaction code; HTTP 410."""
 
     pass
+
+
+class MissionTerminatedError(Exception):
+    """Referenced mission is not active; HTTP 403 mission_terminated."""
+
+    pass

@@ -6,7 +6,7 @@ from dataclasses import replace
 
 from mm.exceptions import NotFoundError
 from mm.impl.backend import MMBackend
-from mm.models import Mission, MissionState
+from mm.models import Mission, MissionLogEntry, MissionState
 from mm.service.mission_control import MissionControl
 
 
@@ -20,11 +20,11 @@ class MemoryMissionControl(MissionControl):
             out = [m for m in out if m.agent_id == agent_id]
         if state is not None:
             out = [m for m in out if m.state == state]
-        return sorted(out, key=lambda m: m.created_at, reverse=True)
+        return sorted(out, key=lambda m: m.approved_at, reverse=True)
 
     def list_missions_for_owner(self, owner_id: str) -> list[Mission]:
         out = [m for m in self._b.missions.values() if m.owner_id == owner_id]
-        return sorted(out, key=lambda m: m.created_at, reverse=True)
+        return sorted(out, key=lambda m: m.approved_at, reverse=True)
 
     def inspect_mission(self, s256: str) -> Mission:
         m = self._b.missions.get(s256)
@@ -32,32 +32,15 @@ class MemoryMissionControl(MissionControl):
             raise NotFoundError("unknown mission")
         return m
 
-    def _set_state(self, s256: str, new_state: MissionState) -> Mission:
+    def mission_log(self, s256: str) -> list[MissionLogEntry]:
+        if s256 not in self._b.missions:
+            raise NotFoundError("unknown mission")
+        return list(self._b.mission_log.get(s256, []))
+
+    def terminate_mission(self, s256: str) -> Mission:
         m = self.inspect_mission(s256)
-        updated = replace(m, state=new_state)
+        if m.state != MissionState.ACTIVE:
+            raise ValueError("can only terminate an active mission")
+        updated = replace(m, state=MissionState.TERMINATED)
         self._b.missions[s256] = updated
         return updated
-
-    def suspend_mission(self, s256: str) -> Mission:
-        m = self.inspect_mission(s256)
-        if m.state != MissionState.ACTIVE:
-            raise ValueError("can only suspend an active mission")
-        return self._set_state(s256, MissionState.SUSPENDED)
-
-    def resume_mission(self, s256: str) -> Mission:
-        m = self.inspect_mission(s256)
-        if m.state != MissionState.SUSPENDED:
-            raise ValueError("can only resume a suspended mission")
-        return self._set_state(s256, MissionState.ACTIVE)
-
-    def revoke_mission(self, s256: str) -> Mission:
-        m = self.inspect_mission(s256)
-        if m.state not in (MissionState.ACTIVE, MissionState.SUSPENDED):
-            raise ValueError("can only revoke an active or suspended mission")
-        return self._set_state(s256, MissionState.REVOKED)
-
-    def complete_mission(self, s256: str) -> Mission:
-        m = self.inspect_mission(s256)
-        if m.state != MissionState.ACTIVE:
-            raise ValueError("can only complete an active mission")
-        return self._set_state(s256, MissionState.COMPLETED)

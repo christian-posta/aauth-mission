@@ -1,10 +1,10 @@
-"""Mission proposal and lifecycle (protocol §Mission Creation, §Mission Management)."""
+"""Mission proposal and lifecycle (protocol §Mission Creation)."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from mm.models import DeferredResponse, Mission, MissionOutcome, MissionProposal, MissionState
+from mm.models import DeferredResponse, Mission, MissionOutcome, MissionProposal
 
 
 class MissionLifecycle(ABC):
@@ -17,7 +17,3 @@ class MissionLifecycle(ABC):
     @abstractmethod
     def get_mission(self, s256: str) -> Mission:
         """Return mission by hash identifier."""
-
-    @abstractmethod
-    def update_mission_state(self, s256: str, new_state: MissionState) -> Mission:
-        """Apply a state transition (not necessarily full admin policy)."""

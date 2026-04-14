@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 
 from mm.models import (
     AuthTokenResponse,
+    InteractionTerminalResult,
     Mission,
     MissionProposal,
     PendingStatus,
@@ -43,7 +44,9 @@ class PendingRequestStore(ABC):
         """Update non-terminal pending state (e.g. status → interacting)."""
 
     @abstractmethod
-    def resolve_pending(self, pending_id: str, result: AuthTokenResponse | Mission) -> None:
+    def resolve_pending(
+        self, pending_id: str, result: AuthTokenResponse | Mission | InteractionTerminalResult
+    ) -> None:
         """Mark success; subsequent reads should reflect completion."""
 
     @abstractmethod

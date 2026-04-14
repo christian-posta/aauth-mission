@@ -118,7 +118,7 @@
         <template x-if="detail">
           <div class="mt-4 space-y-4">
             <p class="font-mono text-xs text-zinc-500" x-text="detail.s256"></p>
-            <pre class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300" x-text="detail.mission && detail.mission.approved"></pre>
+            <pre class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300" x-text="detail.mission ? JSON.stringify(detail.mission, null, 2) : ''"></pre>
             <div class="flex flex-wrap gap-2">
               <template x-for="act in patchActions(detail.state)" :key="act.state">
                 <button
@@ -147,7 +147,7 @@
           detail: null,
           detailError: "",
           stateFilter: "",
-          stateFilters: ["", "proposed", "active", "suspended", "completed", "revoked", "expired"],
+          stateFilters: ["", "active", "terminated"],
           init() {
             if (!AAuthAuth.requireRole("user", "index.html")) return;
             this.loadConsent();
@@ -203,9 +203,7 @@
           patchActions(current) {
             var order = [
               { state: "active", label: "Set active" },
-              { state: "suspended", label: "Suspend" },
-              { state: "revoked", label: "Revoke" },
-              { state: "completed", label: "Complete" },
+              { state: "terminated", label: "Terminate" },
             ];
             return order.filter(function (a) {
               return a.state !== current;
