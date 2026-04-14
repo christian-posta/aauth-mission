@@ -320,11 +320,6 @@ def create_app(settings: MMHttpSettings | None = None) -> FastAPI:
     def well_known_person():
         return _well_known_payload()
 
-    @app.get("/.well-known/aauth-mission.json")
-    def well_known_mission_alias():
-        """Backward-compatible alias; same document as aauth-person.json."""
-        return _well_known_payload()
-
     @app.get("/.well-known/jwks.json")
     def jwks_placeholder():
         return {"keys": []}

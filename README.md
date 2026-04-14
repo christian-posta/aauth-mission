@@ -19,6 +19,12 @@ pytest
 
 With the server running on port 8000:
 
+**Person Server metadata** (includes `permission_endpoint`, `audit_endpoint`, `token_endpoint`, `mission_endpoint`, and the other URLs from **SPEC**). Use the same host and port as **`AAUTH_MM_PUBLIC_ORIGIN`** so the JSON matches how you call the API.
+
+```bash
+curl -sS http://127.0.0.1:8000/.well-known/aauth-person.json | jq
+```
+
 ```bash
 ./scripts/mm-demo.sh
 # or: BASE_URL=http://127.0.0.1:8080 AGENT_ID=my-agent ./scripts/mm-demo.sh
@@ -26,7 +32,7 @@ With the server running on port 8000:
 
 The script prints each HTTP request then the full `curl -i` response. It covers:
 
-- `GET /.well-known/aauth-person.json` (and legacy `aauth-mission.json` alias)
+- `GET /.well-known/aauth-person.json`
 - `POST /mission` with `description` + optional `tools`
 - `POST /permission` and `POST /audit` with a `mission` object
 - `POST /token` with `AAuth-Mission` header (mission context)
@@ -127,7 +133,7 @@ Then open **`/ui/`**: use **`dev-user-secret`** for the legal-user dashboard, or
 
 | Endpoint | Purpose |
 |----------|---------|
-| **`GET /.well-known/aauth-person.json`** | PS metadata: **`issuer`**, **`token_endpoint`**, **`mission_endpoint`**, **`permission_endpoint`**, **`audit_endpoint`**, **`interaction_endpoint`**, **`mission_control_endpoint`**, **`jwks_uri`**. Alias: **`/.well-known/aauth-mission.json`**. |
+| **`GET /.well-known/aauth-person.json`** | PS metadata: **`issuer`**, **`token_endpoint`**, **`mission_endpoint`**, **`permission_endpoint`**, **`audit_endpoint`**, **`interaction_endpoint`**, **`mission_control_endpoint`**, **`jwks_uri`**. |
 | **`POST /mission`** | Proposal: **`{"description":"...","tools":[{"name","description"}], "owner_hint":?}`**. Response: **mission blob JSON** + **`AAuth-Mission`** header (**`s256`** is only in the header, not in the JSON body). |
 | **`POST /token`** | **`resource_token`**, optional **`mission`** `{approver,s256}` or **`AAuth-Mission`** request header. |
 | **`POST /permission`** | **`action`**, optional **`mission`**, optional **`description`** / **`parameters`**. Returns **`{"permission":"granted"}`** or **`denied`**. |

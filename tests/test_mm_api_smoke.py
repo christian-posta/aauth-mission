@@ -42,15 +42,13 @@ def _sign_post(path: str, body: dict, private_key) -> tuple[bytes, dict[str, str
 
 
 def test_well_known_metadata(client: TestClient) -> None:
-    r = client.get("/.well-known/aauth-mission.json")
+    r = client.get("/.well-known/aauth-person.json")
     assert r.status_code == 200
     data = r.json()
     assert data["issuer"] == "http://test.example"
     assert data["token_endpoint"] == "http://test.example/token"
     assert data["mission_endpoint"] == "http://test.example/mission"
     assert data["permission_endpoint"] == "http://test.example/permission"
-    r2 = client.get("/.well-known/aauth-person.json")
-    assert r2.json() == data
 
 
 def _s256_from_mission_response(r) -> str:
