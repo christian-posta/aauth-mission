@@ -14,7 +14,7 @@
       <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
         <div>
           <h1 class="text-lg font-semibold text-white">Person Server console</h1>
-          <p class="text-xs text-zinc-500">Administrator — pending requests and all missions</p>
+          <p class="text-xs text-zinc-500">Administrator — pending requests, all missions, and agents</p>
         </div>
         <button
           type="button"
@@ -132,6 +132,48 @@
         </table>
       </div>
       </section>
+
+      <section>
+        <div>
+          <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Agents</h2>
+          <p class="mt-1 text-xs text-zinc-600">
+            Agents authorized to act on behalf of this Person Server's owner. Agents enrolled with a stable key can
+            renew tokens without prompting the user again (<em>Stable Key Renewal</em>).
+          </p>
+        </div>
+        <p x-show="agentsError" class="mt-4 text-sm text-red-400" x-text="agentsError"></p>
+        <div x-show="agentsLoading" class="mt-4 text-zinc-500">Loading…</div>
+        <ul x-show="!agentsLoading && agents.length === 0" class="mt-4 text-sm text-zinc-500">No agents.</ul>
+        <div x-show="agents.length > 0" class="mt-4 overflow-x-auto rounded-xl border border-zinc-800">
+          <table class="w-full min-w-[640px] text-left text-sm">
+            <thead class="border-b border-zinc-800 bg-zinc-900 text-xs uppercase text-zinc-500">
+              <tr>
+                <th class="px-4 py-3">Agent ID</th>
+                <th class="px-4 py-3">Key thumbprint (jkt)</th>
+                <th class="px-4 py-3">Enrolled</th>
+                <th class="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-800">
+              <template x-for="a in agents" :key="a.agent_id">
+                <tr class="hover:bg-zinc-900/80">
+                  <td class="px-4 py-3 font-mono text-xs text-zinc-300" x-text="a.agent_id"></td>
+                  <td class="px-4 py-3 font-mono text-xs text-zinc-500" x-text="truncate(a.jkt || '')"></td>
+                  <td class="px-4 py-3 text-xs text-zinc-500" x-text="a.enrolled_at || ''"></td>
+                  <td class="px-4 py-3">
+                    <button
+                      type="button"
+                      @click="revokeAgent(a.agent_id)"
+                      class="text-red-400 hover:text-red-300 hover:underline text-xs"
+                    >Revoke</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        <p x-show="agentsRevokeMsg" class="mt-2 text-xs text-emerald-400" x-text="agentsRevokeMsg"></p>
+      </section>
     </main>
 
     <div
@@ -175,10 +217,14 @@
         return {
           missions: [],
           pending: [],
+          agents: [],
           loading: true,
           pendingLoading: true,
+          agentsLoading: true,
           error: "",
           pendingError: "",
+          agentsError: "",
+          agentsRevokeMsg: "",
           detail: null,
           detailError: "",
           stateFilter: "",
@@ -189,6 +235,7 @@
               return;
             }
             this.refreshAll();
+            this.loadAgents();
           },
           signOut() {
             AAuthAuth.clear();
@@ -257,6 +304,30 @@
               await this.refreshAll();
             } catch (e) {
               this.detailError = e.message || String(e);
+            }
+          },
+          async loadAgents() {
+            this.agentsLoading = true;
+            this.agentsError = "";
+            try {
+              this.agents = await AAuthApi.fetchJson("/admin/agents");
+            } catch (e) {
+              this.agentsError = e.message || String(e);
+            } finally {
+              this.agentsLoading = false;
+            }
+          },
+          async revokeAgent(agentId) {
+            this.agentsError = "";
+            this.agentsRevokeMsg = "";
+            try {
+              await AAuthApi.fetchJson("/admin/agents/" + encodeURIComponent(agentId), {
+                method: "DELETE",
+              });
+              this.agentsRevokeMsg = "Agent revoked.";
+              await this.loadAgents();
+            } catch (e) {
+              this.agentsError = e.message || String(e);
             }
           },
         };
