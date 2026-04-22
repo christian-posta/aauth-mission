@@ -1,7 +1,7 @@
 [project]
-name = "aauth-mission-mm"
+name = "aauth-person-server"
 version = "0.1.0"
-description = "AAuth Mission Manager reference API (in-memory) per draft-hardt-aauth-protocol"
+description = "AAuth Person Server reference implementation (in-memory) per draft-hardt-aauth-protocol"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,14 +15,14 @@ dependencies = [
 ]
 
 [tool.setuptools.package-data]
-"mm" = ["http/static/**/*"]
+"ps" = ["http/static/**/*"]
 
 [project.optional-dependencies]
 dev = ["httpx>=0.26.0", "pytest>=8.0.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mm*"]
+include = ["ps*"]
 
 [build-system]
 requires = ["setuptools>=69.0"]
