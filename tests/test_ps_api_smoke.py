@@ -20,6 +20,8 @@ def client() -> TestClient:
             insecure_dev=True,
             public_origin="http://test.example",
             auto_approve_token=False,
+            admin_token=None,
+            user_token=None,
         )
     )
     return TestClient(app)
@@ -141,7 +143,15 @@ def test_consent_includes_mission_for_deferred_token_with_mission(client: TestCl
 
 
 def test_post_token_hwk_signed(client: TestClient) -> None:
-    app = create_app(PSHttpSettings(insecure_dev=False, public_origin="http://test.example", auto_approve_token=True))
+    app = create_app(
+        PSHttpSettings(
+            insecure_dev=False,
+            public_origin="http://test.example",
+            auto_approve_token=True,
+            admin_token=None,
+            user_token=None,
+        )
+    )
     c = TestClient(app)
     pk, _pub = aauth.generate_ed25519_keypair()
     body_bytes, hdrs = _sign_post("/token", {"resource_token": "x"}, pk)
@@ -180,6 +190,7 @@ def test_user_missions_owner_and_consent(client: TestClient) -> None:
             insecure_dev=True,
             public_origin="http://test.example",
             auto_approve_token=False,
+            admin_token=None,
             user_token="user-secret",
             user_id="alice",
         )

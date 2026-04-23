@@ -1,205 +1,360 @@
-# AAuth Person Server (reference)
+# AAuth Person Portal Reference
 
-Python interfaces and a **FastAPI** server implementing Person Server–style endpoints from **SPEC.md** (missions, token, permission, audit, interaction, consent).
+Reference implementation of:
 
-## Unified Person Portal (Person Server + Agent Server, one process)
+- a Person Server (`ps.http.app`)
+- an Agent Server (`agent_server.http.app`)
+- a unified portal that serves both on one origin (`portal.http.app`)
 
-Run **both** the Person Server API and the Agent Server API on a **single origin** with one dashboard (`portal/`). Use this when you want missions, token flows, consent, **and** agent registration/bindings without starting two servers.
+The unified portal is the main entrypoint now. It combines mission, token, consent, registration, binding, and refresh flows behind one UI and one set of well-known endpoints. Running **only** the Person Server or **only** the Agent Server (original ports, UIs, and script invocations) is documented in one place below: [Standalone Person Server and Agent Server](#standalone-person-server-and-agent-server).
 
-### Quick start
+## What Changed
 
-```bash
-cd /path/to/aauth-person-server
-source .venv/bin/activate   # or: uv venv .venv && uv pip install -e ".[dev]"
+The latest commit (`c67bd63`, `first crack unifying PS and AgentServer to a single UI/UX`) introduced the new `portal/` app, portal UI pages, and the route split needed to host Person Server and Agent Server behavior on the same origin.
 
-export AAUTH_PS_PUBLIC_ORIGIN=http://localhost:8765
-export AAUTH_AS_PUBLIC_ORIGIN=http://localhost:8765
-export AAUTH_PS_ADMIN_TOKEN=mytoken
-export AAUTH_PS_INSECURE_DEV=true
-export AAUTH_AS_PERSON_TOKEN=mytoken
-# Disable AS HTTP-sig verification (required for curl/shell walkthrough scripts):
-export AAUTH_AS_INSECURE_DEV=true
+Important behavior change:
 
-uvicorn portal.http.app:app --reload --host 0.0.0.0 --port 8765
-```
+- Person Server pending URLs still use `GET /pending/{id}`.
+- Agent registration polling uses `GET /register/pending/{id}` in the portal.
+- Standalone Agent Server still uses `GET /pending/{id}`.
 
-- **Portal UI:** open [http://localhost:8765/ui/index.html](http://localhost:8765/ui/index.html) and sign in with `mytoken` (value of `AAUTH_PS_ADMIN_TOKEN` / `AAUTH_AS_PERSON_TOKEN`).
-- **Well-known:** `/.well-known/aauth-person.json`, `/.well-known/aauth-agent.json`, and `/.well-known/jwks.json` (real Agent Server signing keys) are all served on the same origin.
-- **Agent registration poll path:** in the portal, pending registration polling uses **`GET /register/pending/{id}`** instead of `GET /pending/{id}` (which is reserved for the Person Server token-broker). When running the agent walkthrough scripts against the portal, set `PENDING_POLL_PREFIX=/register/pending` (bash) or `--pending-prefix /register/pending` (Python). Standalone Agent Server still uses `/pending/{id}` unchanged.
-- **`ps-demo.sh`** and **`hwk-ps-client.sh`** work against the portal without any changes — PS routes are at the same paths. Just point them at port 8765.
-- **`agent-server-walkthrough.sh`** and **`agent-server-signed-walkthrough.py`** work against the portal with the `PENDING_POLL_PREFIX`/`--pending-prefix` flag set as above.
+## Verified Paths
 
-The sections below describe the **standalone Person Server** (`ps.http.app`) and related tooling; behavior and env vars are the same unless noted above.
+On April 23, 2026, the commands and scripts below were re-run successfully against this repo:
 
-## Run the API
+- `pytest`
+- `./scripts/ps-demo.sh`
+- `./scripts/hwk-ps-client.sh`
+- `./scripts/agent-server-walkthrough.sh`
+- `.venv/bin/python scripts/agent-server-signed-walkthrough.py`
 
-### With uv (recommended)
+They were verified against the unified portal, and the agent walkthroughs were also verified against the standalone Agent Server (see [Standalone Person Server and Agent Server](#standalone-person-server-and-agent-server)).
+
+## Install
+
+With `uv`:
 
 ```bash
 cd /path/to/aauth-person-server
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev]"
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-export AAUTH_PS_ADMIN_TOKEN=mytoken
-export AAUTH_PS_INSECURE_DEV=true
-# Use a different port if the unified portal is already on 8765:
-uvicorn ps.http.app:app --reload --host 0.0.0.0 --port 8766
-pytest
 ```
 
-### Curl walkthrough (manual server)
-
-Works against both the **unified portal** (`portal.http.app`, port 8765) and the **standalone Person Server** (`ps.http.app`). PS routes are identical in both.
-
-**Person Server metadata** (includes `permission_endpoint`, `audit_endpoint`, `token_endpoint`, `mission_endpoint`, and the other URLs from **SPEC**). Use the same host and port as **`AAUTH_PS_PUBLIC_ORIGIN`** so the JSON matches how you call the API.
-
-```bash
-# Unified portal (recommended):
-curl -sS http://127.0.0.1:8765/.well-known/aauth-person.json | jq
-# Standalone PS (if running separately):
-curl -sS http://127.0.0.1:8766/.well-known/aauth-person.json | jq
-```
-
-```bash
-# Against unified portal (port 8765):
-./scripts/ps-demo.sh
-
-# Against standalone PS on a different port:
-BASE_URL=http://127.0.0.1:8766 ./scripts/ps-demo.sh
-```
-
-The script prints each HTTP request then the full `curl -i` response. It covers:
-
-- `GET /.well-known/aauth-person.json`
-- `POST /mission` with `description` + optional `tools`
-- `POST /permission` and `POST /audit` with a `mission` object
-- `POST /token` with `AAuth-Mission` header (mission context)
-- `GET /consent` + `POST /consent/{pending_id}/decision` (user consent)
-- Polling `GET /pending/...` and a `DELETE` → `410` demo
-
-Install **`jq`** for prettier JSON in the script output (`brew install jq`).
-
-### HWK sample client (`scripts/hwk-ps-client.sh`)
-
-`./scripts/ps-demo.sh` uses **`X-AAuth-Agent-Id`** (dev stub). For **real HWK** signing (`AAUTH_PS_INSECURE_DEV=false`), use **`scripts/hwk-ps-client.sh`** — this is the only entry point; it locates the project venv and delegates to an internal Python implementation. It calls **`aauth.sign_request(..., sig_scheme="hwk")`**, persists an **Ed25519** key as PEM, and by default does **`POST /mission`** (built-in demo description) then **`POST /token`** with JSON **`mission`** (and can sign **`POST /permission`**, **`POST /audit`**, **`POST /interaction`** for completion). Use **`--no-mission`** to skip mission creation and request a token with only **`resource_token`**.
-
-Works against both the **unified portal** and the **standalone PS** — PS routes are at the same paths in both.
-
-```bash
-# Against the unified portal (portal must be started with AAUTH_PS_INSECURE_DEV=false):
-AAUTH_PS_INSECURE_DEV=false AAUTH_AS_INSECURE_DEV=false \
-uvicorn portal.http.app:app --host 127.0.0.1 --port 8765
-./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8765
-
-# Against standalone PS only:
-AAUTH_PS_INSECURE_DEV=false uvicorn ps.http.app:app --host 127.0.0.1 --port 8766
-./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8766
-
-# Custom mission, permission check, and audit (still one flow):
-./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8765 \
-  --mission-description "# Demo\n\nDo something." \
-  --permission-action WebSearch --audit
-```
-
-Use **`--complete-mission`** to send a `completion` interaction after the token is issued (not with **`--no-mission`**).
-
-### With plain venv + pip
+With plain `venv` + `pip`:
 
 ```bash
 cd /path/to/aauth-person-server
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
-uvicorn ps.http.app:app --reload --host 0.0.0.0 --port 8765
 ```
 
-### Web console (`/ui`)
+## Unified Portal
 
-Static UI (Alpine.js + Tailwind via CDN) for trying flows in a browser.
-
-- **URL:** `{PUBLIC_ORIGIN}/ui/` (e.g. [http://localhost:8765/ui/](http://localhost:8765/ui/)). Set **`AAUTH_PS_PUBLIC_ORIGIN`** to match the browser origin.
-- **Dashboards:** **`user.html`** (legal user: **`/user/missions`**, consent queue) vs **`admin.html`** ( **`GET/PATCH /missions`**, **`GET /admin/pending`**). Mission **PATCH** only supports **`{"state":"terminated"}`** (from **active**). Mission detail includes a **`log`** array.
-- **Legal user scoping:** missions must include **`owner_hint`** on **`POST /mission`** equal to **`AAUTH_PS_USER_ID`** if they should appear under “My missions” and in **`GET /user/consent`** for that person.
-- **Consent page:** **`/ui/consent.html?code=...`** loads **`GET /consent?code=...`** and posts to **`POST /consent/{pending_id}/decision`**. You normally open it from a link in the **`AAuth-Requirement`** header or queue—no token required on that page for this reference server. Legacy **`/interaction`** routes still work as aliases.
-
-#### What `ADMIN_TOKEN` and `USER_TOKEN` are
-
-They are **shared secrets** the server compares to the **`Authorization: Bearer …`** header. They are **not** issued by an external IdP in this reference app—pick any string you like in env and paste the same value in the UI (or in `curl`).
-
-| Env var | API it gates | Purpose |
-|---------|----------------|--------|
-| **`AAUTH_PS_USER_TOKEN`** | **`GET/PATCH /user/missions`**, **`GET /user/consent`** | When set, legal-user routes require a matching Bearer token. When **unset**, those routes return **503** (“not configured”). |
-| **`AAUTH_PS_ADMIN_TOKEN`** | **`GET/PATCH /missions`**, **`GET /admin/pending`** | When **unset** (default), admin routes are **open** (no Bearer required). When **set**, callers must send **`Authorization: Bearer <that value>`**. |
-| **`AAUTH_PS_USER_ID`** | *(with user token)* | Subject id returned for a valid user Bearer token; must match **`owner_hint`** on missions you want that user to own. |
-
-#### How sign-in on `/ui/` works
-
-The login form (`/ui/` → `index.html`) does **not** ask “admin or user?” explicitly. It **probes** the API:
-
-1. **`GET /user/missions`** — if you pasted a token, it sends **`Authorization: Bearer <token>`**; if the field is empty, no Bearer header is sent.
-2. If the response is **200** → you are signed in as **legal user** and redirected to **`user.html`**.
-3. If the response is **503**, **401**, or **403** → it tries **`GET /missions`** with the **same** headers.
-4. If that response is **200** → you are signed in as **admin** and redirected to **`admin.html`**.
-
-Implications:
-
-- **Legal user:** you **must** set **`AAUTH_PS_USER_TOKEN`** and paste **exactly** that secret. An empty token will not succeed as user (you will get **503** if user is unset, or **401/403** if the token is wrong).
-- **Admin with no `ADMIN_TOKEN`:** **`GET /missions`** succeeds **without** a Bearer header, so you can leave the token field **empty** and click **Sign in**—you still land on the admin dashboard (handy for local demos).
-- **Admin with `ADMIN_TOKEN` set:** paste that same secret so the probe sends the correct Bearer header.
-
-#### Example: run the server with user + optional admin secret
+Start the combined app:
 
 ```bash
-export AAUTH_PS_USER_TOKEN=dev-user-secret
-export AAUTH_PS_USER_ID=alice
-# Optional — if set, the UI (and curl) must send this Bearer for /missions and /admin/pending:
-# export AAUTH_PS_ADMIN_TOKEN=dev-admin-secret
+cd /path/to/aauth-person-server
+source .venv/bin/activate
 
-uvicorn ps.http.app:app --reload --host 0.0.0.0 --port 8765
+export AAUTH_PS_PUBLIC_ORIGIN=http://127.0.0.1:8765
+export AAUTH_AS_PUBLIC_ORIGIN=http://127.0.0.1:8765
+export AAUTH_PS_ADMIN_TOKEN=mytoken
+export AAUTH_AS_PERSON_TOKEN=mytoken
+
+# Dev mode: stub PS agent identity + skip AS signature verification
+export AAUTH_PS_INSECURE_DEV=true
+export AAUTH_AS_INSECURE_DEV=true
+
+uvicorn portal.http.app:app --reload --host 127.0.0.1 --port 8765
 ```
 
-Then open **`/ui/`**: use **`dev-user-secret`** for the legal-user dashboard, or leave the token blank for **open** admin (if **`AAUTH_PS_ADMIN_TOKEN`** is unset), or use **`dev-admin-secret`** if you enabled admin token above.
+Useful URLs:
 
-### Environment (`AAUTH_PS_*`)
+- Portal login: `http://127.0.0.1:8765/ui/index.html`
+- Portal dashboard: `http://127.0.0.1:8765/ui/portal.html`
+- Consent page: `http://127.0.0.1:8765/ui/consent.html`
+- Person metadata: `http://127.0.0.1:8765/.well-known/aauth-person.json`
+- Agent metadata: `http://127.0.0.1:8765/.well-known/aauth-agent.json`
+- Signing JWKS: `http://127.0.0.1:8765/.well-known/jwks.json`
+
+Sign into the portal with the value of `AAUTH_PS_ADMIN_TOKEN` / `AAUTH_AS_PERSON_TOKEN`.
+
+## Walkthrough Scripts (unified portal)
+
+The commands below assume the portal is running on `http://127.0.0.1:8765` with the env vars from [Unified Portal](#unified-portal). For running the same scripts against **only** `ps.http.app` or **only** `agent_server.http.app`, see [Standalone Person Server and Agent Server](#standalone-person-server-and-agent-server).
+
+### Person Server Demo
+
+`./scripts/ps-demo.sh` exercises the dev-mode Person Server flow:
+
+- `GET /.well-known/aauth-person.json`
+- `POST /mission`
+- `POST /permission`
+- `POST /audit`
+- `POST /token`
+- `GET /consent`
+- `POST /consent/{pending_id}/decision`
+- `GET /pending/{id}`
+- `DELETE /pending/{id}`
+
+```bash
+BASE_URL=http://127.0.0.1:8765 ./scripts/ps-demo.sh
+```
+
+`jq` is optional but makes the output easier to read.
+
+### HWK Person Server Client
+
+`./scripts/hwk-ps-client.sh` uses real HWK signing for Person Server routes. It delegates to `scripts/_hwk_ps_client.py`, creates or reuses an Ed25519 PEM key, and can drive:
+
+- `POST /mission`
+- `POST /permission`
+- `POST /audit`
+- `POST /token`
+- optional `POST /interaction` completion
+
+For this script, Person Server signature verification must be enabled on the process you hit (portal includes both stacks):
+
+```bash
+AAUTH_PS_PUBLIC_ORIGIN=http://127.0.0.1:8765 \
+AAUTH_AS_PUBLIC_ORIGIN=http://127.0.0.1:8765 \
+AAUTH_PS_ADMIN_TOKEN=mytoken \
+AAUTH_AS_PERSON_TOKEN=mytoken \
+AAUTH_PS_INSECURE_DEV=false \
+AAUTH_AS_INSECURE_DEV=false \
+uvicorn portal.http.app:app --host 127.0.0.1 --port 8765
+```
+
+Then run:
+
+```bash
+./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8765 --permission-action WebSearch --audit
+```
+
+Notes:
+
+- The script intentionally pauses on deferred consent and polls until the user approves.
+- Approve in the portal UI, or call `GET /consent?code=...` followed by `POST /consent/{pending_id}/decision`.
+- A successful completion returns a fake `auth_token` string, not a JWT.
+
+### Agent Server Walkthrough (insecure dev)
+
+`./scripts/agent-server-walkthrough.sh` verifies the registration and approval flow using structurally valid signature headers while `AAUTH_AS_INSECURE_DEV=true`.
+
+```bash
+AUTO=1 \
+BASE=http://127.0.0.1:8765 \
+PERSON_TOKEN=mytoken \
+PENDING_POLL_PREFIX=/register/pending \
+./scripts/agent-server-walkthrough.sh
+```
+
+The script verifies:
+
+- `POST /register`
+- poll before approval
+- `POST /person/registrations/{id}/approve`
+- poll after approval
+- JWT payload structure
+- `cnf.jwk.x` matches the registration key
+- re-registration with the same stable key
+- `/person/registrations`
+- `/person/bindings`
+
+Optional env vars:
+
+- `AUTO=1` skips pauses.
+- `SKIP_OPTIONAL=1` skips re-register/list/revoke extras.
+- `PENDING_POLL_PREFIX=/register/pending` is required for the portal (registration poll lives under `/register/pending`, not `/pending`).
+
+### Agent Server Walkthrough (real signatures)
+
+`scripts/agent-server-signed-walkthrough.py` uses real `aauth.sign_request(...)` calls:
+
+- `hwk` for registration and poll
+- `jkt-jwt` for refresh
+
+Start the portal with signatures enforced, then:
+
+```bash
+AAUTH_PS_PUBLIC_ORIGIN=http://127.0.0.1:8765 \
+AAUTH_AS_PUBLIC_ORIGIN=http://127.0.0.1:8765 \
+AAUTH_PS_ADMIN_TOKEN=mytoken \
+AAUTH_AS_PERSON_TOKEN=mytoken \
+AAUTH_PS_INSECURE_DEV=false \
+AAUTH_AS_INSECURE_DEV=false \
+uvicorn portal.http.app:app --host 127.0.0.1 --port 8765
+```
+
+```bash
+.venv/bin/python scripts/agent-server-signed-walkthrough.py \
+  --base http://127.0.0.1:8765 \
+  --person-token mytoken \
+  --pending-prefix /register/pending
+```
+
+The script verifies:
+
+- `GET /.well-known/aauth-agent.json`
+- `POST /register`
+- poll before approval
+- approval via `/person/registrations/{id}/approve`
+- agent token issuance
+- decoded token claims
+- `POST /refresh`
+- refreshed token keeps the same `sub` and rotates `cnf.jwk`
+
+## Standalone Person Server and Agent Server
+
+Use these when you want **only** the Person Server or **only** the Agent Server (isolated ports, original UIs, original registration poll path `GET /pending/{id}` on AS). Full agent-server flows and env tables remain in **AGENTSERVER.md**.
+
+### Standalone Person Server (`ps.http.app`)
+
+```bash
+AAUTH_PS_PUBLIC_ORIGIN=http://127.0.0.1:8766 \
+AAUTH_PS_INSECURE_DEV=true \
+uvicorn ps.http.app:app --reload --host 127.0.0.1 --port 8766
+```
+
+**`ps-demo.sh`** against standalone PS:
+
+```bash
+BASE_URL=http://127.0.0.1:8766 ./scripts/ps-demo.sh
+```
+
+**`hwk-ps-client.sh`** against standalone PS (start with `AAUTH_PS_INSECURE_DEV=false` only on the PS process):
+
+```bash
+AAUTH_PS_INSECURE_DEV=false uvicorn ps.http.app:app --host 127.0.0.1 --port 8766
+```
+
+```bash
+./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8766 --permission-action WebSearch --audit
+```
+
+Static PS console (when running standalone): `http://127.0.0.1:8766/ui/` (`index.html`, `user.html`, `admin.html` — sources under `ps/http/static/`; behavior in **SPEC.md**).
+
+### Standalone Agent Server (`agent_server.http.app`)
+
+```bash
+AAUTH_AS_PUBLIC_ORIGIN=http://127.0.0.1:8800 \
+AAUTH_AS_ISSUER=http://127.0.0.1:8800 \
+AAUTH_AS_SERVER_DOMAIN=localhost \
+AAUTH_AS_PERSON_TOKEN=mytoken \
+AAUTH_AS_INSECURE_DEV=true \
+uvicorn agent_server.http.app:app --reload --host 127.0.0.1 --port 8800
+```
+
+UI:
+
+- `http://127.0.0.1:8800/ui/index.html`
+- `http://127.0.0.1:8800/ui/registrations.html`
+- `http://127.0.0.1:8800/ui/agents.html`
+
+**`agent-server-walkthrough.sh`** (default poll prefix `/pending`; no `PENDING_POLL_PREFIX` needed):
+
+```bash
+AUTO=1 \
+BASE=http://127.0.0.1:8800 \
+PERSON_TOKEN=mytoken \
+./scripts/agent-server-walkthrough.sh
+```
+
+**`agent-server-signed-walkthrough.py`** with real signatures:
+
+```bash
+AAUTH_AS_PUBLIC_ORIGIN=http://127.0.0.1:8800 \
+AAUTH_AS_ISSUER=http://127.0.0.1:8800 \
+AAUTH_AS_SERVER_DOMAIN=localhost \
+AAUTH_AS_PERSON_TOKEN=mytoken \
+AAUTH_AS_INSECURE_DEV=false \
+uvicorn agent_server.http.app:app --host 127.0.0.1 --port 8800
+```
+
+```bash
+.venv/bin/python scripts/agent-server-signed-walkthrough.py \
+  --base http://127.0.0.1:8800 \
+  --person-token mytoken
+```
+
+## Environment
+
+### Person Server / Portal (`AAUTH_PS_*`)
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `AAUTH_PS_PUBLIC_ORIGIN` | `http://localhost:8765` | Public base URL (metadata, **`AAuth-Requirement`** `url=...`). |
-| `AAUTH_PS_INSECURE_DEV` | `true` | If `true`, agent routes accept **`X-AAuth-Agent-Id`** without HTTP message signatures. |
-| `AAUTH_PS_ADMIN_TOKEN` | *(unset)* | If set, `GET/PATCH /missions` require `Authorization: Bearer <token>`. |
-| `AAUTH_PS_USER_TOKEN` | *(unset)* | Enables `/user/missions`, `/user/consent`; requires bearer token. |
-| `AAUTH_PS_USER_ID` | `user` | Subject for legal-user token; must match **`owner_hint`** on missions. |
-| `AAUTH_PS_AUTO_APPROVE_TOKEN` | `false` | If `true`, **`POST /token`** returns an auth token immediately (no consent). |
-| `AAUTH_PS_AUTO_APPROVE_MISSION` | `true` | If `false`, **`POST /mission`** returns **`202`** until the user approves via consent. |
-| `AAUTH_PS_PENDING_TTL_SECONDS` | `600` | TTL for open pending rows. |
-| `AAUTH_PS_AGENT_JWT_STUB` | `stub-agent-jwt` | Placeholder agent JWT for the federator stub. |
-| `AAUTH_PS_JWKS_URI` | *(unset)* | Override **`jwks_uri`** in well-known metadata. |
+| `AAUTH_PS_PUBLIC_ORIGIN` | `http://localhost:8765` | Public base URL for metadata and consent links. |
+| `AAUTH_PS_INSECURE_DEV` | `true` | Accept `X-AAuth-Agent-Id` instead of verifying HWK signatures. |
+| `AAUTH_PS_ADMIN_TOKEN` | unset | Bearer token for `/missions` and `/admin/pending`. If unset, admin routes are open. |
+| `AAUTH_PS_USER_TOKEN` | unset | Enables `/user/*` routes. |
+| `AAUTH_PS_USER_ID` | `user` | Owner id returned for the configured legal-user token. |
+| `AAUTH_PS_AUTO_APPROVE_TOKEN` | `false` | Skip consent on `POST /token`. |
+| `AAUTH_PS_AUTO_APPROVE_MISSION` | `true` | If `false`, mission creation is deferred for approval. |
+| `AAUTH_PS_PENDING_TTL_SECONDS` | `600` | TTL for open Person Server pending rows. |
+| `AAUTH_PS_JWKS_URI` | unset | Override `jwks_uri` in Person metadata. |
 
-**Agent identity (dev):** with `AAUTH_PS_INSECURE_DEV=true`, send **`X-AAuth-Agent-Id`** on agent routes.
+### Agent Server / Portal (`AAUTH_AS_*`)
 
-**Agent identity (production):** `AAUTH_PS_INSECURE_DEV=false` — HTTP Message Signatures (RFC 9421) with **`Signature-Input`**, **`Signature`**, **`Signature-Key`** (`hwk`). The agent id is the JWK thumbprint.
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `AAUTH_AS_PUBLIC_ORIGIN` | `http://localhost:8800` | Public base URL for agent metadata. In the portal, this is effectively aligned to `AAUTH_PS_PUBLIC_ORIGIN`. |
+| `AAUTH_AS_ISSUER` | `https://agent-server.example` | `iss` claim for issued agent tokens. In the portal, issuer is aligned to the portal origin. |
+| `AAUTH_AS_SERVER_DOMAIN` | `agent-server.example` | Domain suffix for generated `aauth:<uuid>@<domain>` ids. |
+| `AAUTH_AS_PERSON_TOKEN` | `changeme` | Bearer token for `/person/*`. |
+| `AAUTH_AS_INSECURE_DEV` | `false` | Skip Agent Server HTTP signature verification. |
+| `AAUTH_AS_SIGNING_KEY_PATH` | unset | Persistent Ed25519 signing key for agent tokens. |
+| `AAUTH_AS_PREVIOUS_KEY_PATH` | unset | Previous signing key kept in JWKS during rotation. |
+| `AAUTH_AS_AGENT_TOKEN_LIFETIME` | `86400` | Agent token lifetime in seconds. |
+| `AAUTH_AS_REGISTRATION_TTL` | `3600` | TTL for pending registrations. |
+| `AAUTH_AS_SIGNATURE_WINDOW` | `60` | Allowed skew for HTTP signature timestamps. |
+| `AAUTH_AS_CLIENT_NAME` | `AAuth Agent Server` | Well-known metadata display name. The portal sets this to `AAuth Person Portal`. |
 
-## API overview (SPEC-aligned)
+## API Surface
 
-| Endpoint | Purpose |
-|----------|---------|
-| **`GET /.well-known/aauth-person.json`** | PS metadata: **`issuer`**, **`token_endpoint`**, **`mission_endpoint`**, **`permission_endpoint`**, **`audit_endpoint`**, **`interaction_endpoint`**, **`mission_control_endpoint`**, **`jwks_uri`**. |
-| **`POST /mission`** | Proposal: **`{"description":"...","tools":[{"name","description"}], "owner_hint":?}`**. Response: **mission blob JSON** + **`AAuth-Mission`** header (**`s256`** is only in the header, not in the JSON body). |
-| **`POST /token`** | **`resource_token`**, optional **`mission`** `{approver,s256}` or **`AAuth-Mission`** request header. |
-| **`POST /permission`** | **`action`**, optional **`mission`**, optional **`description`** / **`parameters`**. Returns **`{"permission":"granted"}`** or **`denied`**. |
-| **`POST /audit`** | **`mission`** (required), **`action`**, … → **`201 Created`**. |
-| **`POST /interaction`** | Agent-facing: **`type`**: `interaction` \| `payment` \| `question` \| `completion`**, optional **`mission`**. Returns **`202`** + poll **`Location`** when user interaction is needed. |
-| **`GET /consent?code=`** | User consent context (replaces legacy **`GET /interaction`**). |
-| **`POST /consent/{pending_id}/decision`** | User decision; optional **`answer_text`** for **`question`** interactions. |
-| **`GET/PATCH /missions`**, **`/user/missions`** | List/detail; **PATCH** only **`state":"terminated"`** from **active**. |
+### Person Server endpoints
 
-### Mission lifecycle
+- `GET /.well-known/aauth-person.json`
+- `POST /mission`
+- `POST /token`
+- `POST /permission`
+- `POST /audit`
+- `POST /interaction`
+- `GET /consent?code=...`
+- `POST /consent/{pending_id}/decision`
+- `GET /pending/{pending_id}`
+- `POST /pending/{pending_id}`
+- `DELETE /pending/{pending_id}`
+- `GET /missions`
+- `GET /missions/{s256}`
+- `PATCH /missions/{s256}`
+- `GET /user/missions`
+- `GET /user/missions/{s256}`
+- `PATCH /user/missions/{s256}`
+- `GET /user/consent`
+- `GET /admin/pending`
 
-Missions are **`active`** or **`terminated`**. Termination via **`PATCH`** or by accepting a **`completion`** interaction. Inactive missions yield **`403`** with **`error":"mission_terminated"`** when referenced.
+### Agent Server endpoints
 
-### End-to-end: token + consent
+- `GET /.well-known/aauth-agent.json`
+- `GET /.well-known/jwks.json`
+- `POST /register`
+- `POST /refresh`
+- standalone poll: `GET /pending/{pending_id}`
+- portal poll: `GET /register/pending/{pending_id}`
+- `GET /person/registrations`
+- `POST /person/registrations/{id}/approve`
+- `POST /person/registrations/{id}/deny`
+- `POST /person/registrations/{id}/link`
+- `GET /person/bindings`
+- `POST /person/bindings/{agent_id}/revoke`
 
-1. **`POST /mission`** (optional) — read **`s256`** from the **`AAuth-Mission`** response header.
-2. **`POST /token`** with **`AAuth-Mission`** and/or JSON **`mission`** if operating in mission context.
-3. On **`202`**, complete consent in the browser (**`/ui/consent.html?code=...`**). For a non-interactive client, use **`GET /consent?code=...`** then **`POST /consent/{pending_id}/decision`** instead.
-4. **`GET`** the **`Location`** pending URL until **`200`** with **`auth_token`**.
+## Tests
 
+Run the smoke tests:
+
+```bash
+pytest
+```
+
+Current smoke coverage is in [tests/test_ps_api_smoke.py](/Users/ceposta/python/aauth-person-server/tests/test_ps_api_smoke.py).

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Interactive walkthrough for AGENTSERVER.md §5 — curl flows in insecure_dev mode.
+# Interactive walkthrough for the README Agent Server insecure-dev flow.
 #
 # Prerequisites:
-#   - Agent server running with AAUTH_AS_INSECURE_DEV=true (see AGENTSERVER.md §2).
+#   - Agent server running with AAUTH_AS_INSECURE_DEV=true (see README.md).
 #   - curl, openssl, python3 on PATH; jq optional (prettier JSON).
 #
 # Usage:
@@ -113,7 +113,7 @@ main() {
   WORK=$(mktemp -d)
   trap "rm -rf '${WORK}'" EXIT
 
-  say "AGENTSERVER.md §5 — curl walkthrough (insecure_dev)"
+  say "README agent walkthrough — curl flow (insecure_dev)"
   sub "Target: ${BASE}"
   sub "Person token: ${PERSON_TOKEN}"
   sub "PENDING_POLL_PREFIX=${PENDING_POLL_PREFIX}"
