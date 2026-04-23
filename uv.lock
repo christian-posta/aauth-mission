@@ -4,18 +4,19 @@ requires-python = ">=3.10"
 
 [[package]]
 name = "aauth"
-version = "0.2.0"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "aauth-signing" },
     { name = "cryptography" },
     { name = "http-message-signatures" },
     { name = "http-sfv" },
     { name = "httpx" },
     { name = "pyjwt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/54/1ebfc90485a9991d0f0d2ac2b3bea57797afac961d29f18c1a658d595873/aauth-0.2.0.tar.gz", hash = "sha256:2bb0e7630b60dc23de403f2ccf4ef5e3c14c924ab435278fcb617b867309ede2", size = 101603 }
+sdist = { url = "https://files.pythonhosted.org/packages/4f/15/11d5bfb63e56ee5b1dcb7abcb4d9a785e9956adbe3ce1c2b5098ec6bdb01/aauth-0.3.2.tar.gz", hash = "sha256:f0c1a58f7027df4df2c811e6937839d8ccfb11c2f77ca6b733b7fb19d1a4962e", size = 55337 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/bb/2269823b6519b3e0f17b29fe0eb54222a6c4961c3005bb0d3512c7f3d7a1/aauth-0.2.0-py3-none-any.whl", hash = "sha256:b031b6f9a0d801eda9ce79d9315f51169fdc31213926f874332da8921795baf5", size = 54545 },
+    { url = "https://files.pythonhosted.org/packages/56/3a/df102e815ba6618af8d9792ae19ffa1fb228312616f2404b857f8d097e38/aauth-0.3.2-py3-none-any.whl", hash = "sha256:ada4ef9ef2a90f5aec3556148ee22eb9f34dc6742823cdd878a2bc29579b5409", size = 50289 },
 ]
 
 [[package]]
@@ -40,7 +41,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aauth", specifier = "==0.2.0" },
+    { name = "aauth", specifier = "==0.3.2" },
     { name = "aiofiles", specifier = ">=23.2.0" },
     { name = "bleach", specifier = ">=6.0" },
     { name = "fastapi", specifier = ">=0.109.0" },
@@ -51,6 +52,19 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "aauth-signing"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "pyjwt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/c7/d242f8c7e356de98dbdbdb9ccb5adf7851308f95ae7bf2b5cf14b066f5eb/aauth_signing-0.1.2.tar.gz", hash = "sha256:b463b87ee172a8d0bdab6afe034b0bebfb00c73584c1a204061d8432198c795e", size = 15494 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/51/123205b5e7343e8c73048532c87fb158b72ae3a619dc377023e0ccae007e/aauth_signing-0.1.2-py3-none-any.whl", hash = "sha256:d473fb6c36c2dae257bd61853a9283651fbb544877f4df0640a27262cf2c487a", size = 20225 },
+]
 
 [[package]]
 name = "aiofiles"

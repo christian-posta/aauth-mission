@@ -5,7 +5,7 @@ description = "AAuth Person Server reference implementation (in-memory) per draf
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "aauth==0.2.0",
+    "aauth==0.3.2",
     "aiofiles>=23.2.0",
     "bleach>=6.0",
     "fastapi>=0.109.0",
