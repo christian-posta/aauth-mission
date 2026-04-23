@@ -12,6 +12,9 @@ Environment:
   PERSON_TOKEN          — bearer for /person/* (default: mytoken)
   PENDING_POLL_PREFIX   — registration poll path prefix (default: /pending). Use /register/pending
                           for the unified portal (portal.http.app); standalone agent_server uses /pending.
+
+After each HTTP step, the script prints an equivalent curl (shell-quoted). Signatures embed a
+created timestamp; replays often fail with 401 unless you regenerate. Use --no-show-curl to omit.
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ import argparse
 import base64
 import json
 import os
+import shlex
 import sys
 import time
 import urllib.error
@@ -103,6 +107,30 @@ def _print_section(title: str) -> None:
     print(f"\n--- {title} ---")
 
 
+def _print_equivalent_curl(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes | None,
+) -> None:
+    """Print a copy-pastable curl that matches this request (signatures are one-shot)."""
+    lines: list[str] = []
+    head = f"curl -sS -D - -X {shlex.quote(method)} {shlex.quote(url)}"
+    hdr_items = list(headers.items())
+    if not hdr_items and body is None:
+        print("\n# equivalent curl:")
+        print(f"  {head}")
+        return
+    lines.append(head + (" \\" if hdr_items or body is not None else ""))
+    for i, (k, v) in enumerate(hdr_items):
+        tail = " \\" if i < len(hdr_items) - 1 or body is not None else ""
+        lines.append(f"  -H {shlex.quote(f'{k}: {v}')}{tail}")
+    if body is not None:
+        lines.append(f"  --data-binary {shlex.quote(body.decode())}")
+    print("\n# equivalent curl (Signature-* values are tied to this run; replay may 401 if stale):")
+    print("\n".join(lines))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -125,7 +153,13 @@ def main() -> int:
         default=os.environ.get("PENDING_POLL_PREFIX", "/pending"),
         help="Poll path after POST /register (default /pending; use /register/pending for portal)",
     )
+    parser.add_argument(
+        "--no-show-curl",
+        action="store_true",
+        help="Do not print equivalent curl commands after each HTTP step",
+    )
     args = parser.parse_args()
+    show_curl = not args.no_show_curl
     base = args.base.rstrip("/")
     person_token = args.person_token
     pending_prefix = args.pending_prefix.rstrip("/")
@@ -142,6 +176,8 @@ def main() -> int:
 
     _print_section("GET /.well-known/aauth-agent.json")
     wh_url = f"{base}/.well-known/aauth-agent.json"
+    if show_curl:
+        _print_equivalent_curl("GET", wh_url, {}, None)
     code, _h, raw = http_do("GET", wh_url, {}, None)
     if code != 200:
         print(f"ERROR: expected 200 from well-known, got {code}: {raw.decode()[:500]}", file=sys.stderr)
@@ -157,7 +193,13 @@ def main() -> int:
     reg_url = f"{base}/register"
     body_obj = {"stable_pub": stable_pub_jwk, "label": "Signed walkthrough client"}
     body_bytes = json.dumps(body_obj).encode()
+    print(
+        "Note: body carries stable_pub (long-term identity). Ephemeral public key is in "
+        "Signature-Key (hwk); the server pairs them for pending + token cnf.jwk."
+    )
     hdrs = _merge_sign_headers("POST", reg_url, body_bytes, eph_priv, sig_scheme="hwk")
+    if show_curl:
+        _print_equivalent_curl("POST", reg_url, hdrs, body_bytes)
     code, rh, raw = http_do("POST", reg_url, hdrs, body_bytes)
     if code != 202:
         print(
@@ -178,6 +220,8 @@ def main() -> int:
     _print_section(f"GET {pending_prefix}/{{id}} (before approval)")
     pend_url = f"{base}{pending_prefix}/{pending_id}"
     hdrs = _merge_sign_headers("GET", pend_url, None, eph_priv)
+    if show_curl:
+        _print_equivalent_curl("GET", pend_url, hdrs, None)
     code, _rh, raw = http_do("GET", pend_url, hdrs, None)
     print(f"HTTP {code}  {raw.decode()}")
     if code != 202:
@@ -186,10 +230,13 @@ def main() -> int:
 
     _print_section("POST /person/registrations/{id}/approve")
     appr_url = f"{base}/person/registrations/{pending_id}/approve"
+    appr_hdrs = {"Authorization": f"Bearer {person_token}"}
+    if show_curl:
+        _print_equivalent_curl("POST", appr_url, appr_hdrs, None)
     code, _rh, raw = http_do(
         "POST",
         appr_url,
-        {"Authorization": f"Bearer {person_token}"},
+        appr_hdrs,
         None,
     )
     if code != 200:
@@ -201,6 +248,8 @@ def main() -> int:
 
     _print_section(f"GET {pending_prefix}/{{id}} (after approval)")
     hdrs = _merge_sign_headers("GET", pend_url, None, eph_priv)
+    if show_curl:
+        _print_equivalent_curl("GET", pend_url, hdrs, None)
     code, _rh, raw = http_do("GET", pend_url, hdrs, None)
     if code != 200:
         print(f"ERROR: expected 200 after approval, got {code}: {raw.decode()[:800]}", file=sys.stderr)
@@ -247,6 +296,8 @@ def main() -> int:
         sig_scheme="jkt-jwt",
         jwt=jkt_jwt,
     )
+    if show_curl:
+        _print_equivalent_curl("POST", refresh_url, hdrs, None)
     code, _rh, raw = http_do("POST", refresh_url, hdrs, None)
     if code != 200:
         print(f"ERROR: refresh expected 200, got {code}: {raw.decode()[:800]}", file=sys.stderr)
