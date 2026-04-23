@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AAuth Agent Server — Sign in</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+  </head>
+  <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+    <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4" x-data="loginForm()" x-init="init()">
+      <div class="mb-8 text-center">
+        <div class="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-sky-500/10 text-sky-400">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        </div>
+        <h1 class="text-2xl font-semibold tracking-tight text-white">Agent Server</h1>
+        <p class="mt-1 text-sm text-zinc-400">Manage your personal agents</p>
+      </div>
+
+      <form @submit.prevent="submit" class="rounded-xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-xl">
+        <label class="block text-sm font-medium text-zinc-300">Person token</label>
+        <input
+          type="password"
+          x-model="token"
+          autocomplete="off"
+          class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          placeholder="Enter your person token (AAUTH_AS_PERSON_TOKEN)"
+        />
+        <p x-show="error" x-text="error" class="mt-3 text-sm text-red-400"></p>
+        <button
+          type="submit"
+          :disabled="loading"
+          class="mt-4 w-full rounded-lg bg-sky-600 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+        >
+          <span x-show="!loading">Sign in</span>
+          <span x-show="loading">Signing in…</span>
+        </button>
+      </form>
+
+      <p class="mt-6 text-center text-xs text-zinc-500">
+        OpenAPI docs: <a class="text-sky-400 hover:underline" href="/docs">/docs</a>
+      </p>
+    </div>
+
+    <script>
+      function loginForm() {
+        return {
+          token: "",
+          error: "",
+          loading: false,
+          init() {
+            if (ASAuth.getRole() === "person") location.href = "registrations.html";
+          },
+          async submit() {
+            this.error = "";
+            this.loading = true;
+            try {
+              var t = this.token.trim();
+              var headers = t ? { Authorization: "Bearer " + t } : {};
+              var r = await fetch("/person/registrations", { headers });
+              if (r.ok || r.status === 200) {
+                ASAuth.setSession(t, "person");
+                location.href = "registrations.html";
+                return;
+              }
+              if (r.status === 401 || r.status === 403) {
+                this.error = "Invalid token. Check AAUTH_AS_PERSON_TOKEN on the server.";
+                return;
+              }
+              this.error = "Server error (" + r.status + ").";
+            } catch (e) {
+              this.error = e.message || String(e);
+            } finally {
+              this.loading = false;
+            }
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Agents — AAuth Agent Server</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+  </head>
+  <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased" x-data="agentsDash()" x-init="init()">
+
+    <!-- Header -->
+    <header class="border-b border-zinc-800 bg-zinc-900/50">
+      <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
+        <div class="flex items-center gap-4">
+          <a href="registrations.html" class="text-sm text-zinc-400 hover:text-white">Pending</a>
+          <a href="agents.html" class="text-sm font-medium text-white hover:text-sky-400">My Agents</a>
+        </div>
+        <button type="button" @click="signOut()" class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800">Sign out</button>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-5xl px-4 py-8">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-lg font-semibold text-white">My Agents</h1>
+          <p class="mt-0.5 text-xs text-zinc-500">Approved agent identities and their enrolled devices</p>
+        </div>
+        <button type="button" @click="load()" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm hover:bg-zinc-800">Refresh</button>
+      </div>
+
+      <p x-show="error" x-text="error" class="mt-4 text-sm text-red-400"></p>
+      <div x-show="loading" class="mt-8 text-center text-zinc-500 text-sm">Loading…</div>
+
+      <!-- Empty -->
+      <div x-show="!loading && active.length === 0 && revoked.length === 0" class="mt-16 text-center">
+        <p class="text-zinc-500">No agents registered yet.</p>
+        <p class="mt-1 text-xs text-zinc-600">Approve a registration on the <a href="registrations.html" class="text-sky-400 hover:underline">Pending</a> page.</p>
+      </div>
+
+      <!-- Active agents -->
+      <div x-show="!loading && active.length > 0" class="mt-6">
+        <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">Active</h2>
+        <div class="space-y-4">
+          <template x-for="b in active" :key="b.agent_id">
+            <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="font-medium text-white" x-text="b.label || 'Unnamed agent'"></p>
+                  <button
+                    type="button"
+                    class="mt-1 font-mono text-xs text-zinc-600 hover:text-zinc-400"
+                    @click="copy(b.agent_id)"
+                    title="Click to copy agent_id"
+                    x-text="b.agent_id"
+                  ></button>
+                  <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                    <span>Enrolled <span class="text-zinc-400" x-text="relativeTime(b.created_at)"></span></span>
+                    <span>
+                      <span class="text-zinc-300" x-text="b.device_count"></span>
+                      <span x-text="b.device_count === 1 ? ' device' : ' devices'"></span>
+                    </span>
+                  </div>
+
+                  <!-- Device thumbprints (expandable) -->
+                  <div x-show="b._expanded" class="mt-3 space-y-1">
+                    <p class="text-xs font-medium uppercase text-zinc-600">Enrolled stable keys</p>
+                    <template x-for="jkt in b.stable_key_thumbprints" :key="jkt">
+                      <button
+                        type="button"
+                        class="block font-mono text-xs text-zinc-600 hover:text-zinc-400"
+                        @click="copy(jkt)"
+                        title="Click to copy"
+                        x-text="jkt"
+                      ></button>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="flex shrink-0 flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    @click="b._expanded = !b._expanded"
+                    class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800"
+                    x-text="b._expanded ? 'Hide keys' : 'Show keys'"
+                  ></button>
+                  <button
+                    type="button"
+                    @click="confirmRevoke(b)"
+                    class="rounded-lg border border-red-900 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/20"
+                  >Revoke</button>
+                </div>
+              </div>
+              <p x-show="b._msg" x-text="b._msg" class="mt-2 text-xs text-emerald-400"></p>
+              <p x-show="b._err" x-text="b._err" class="mt-2 text-xs text-red-400"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Revoked agents -->
+      <div x-show="!loading && revoked.length > 0" class="mt-10">
+        <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-600">Revoked</h2>
+        <div class="space-y-3 opacity-50">
+          <template x-for="b in revoked" :key="b.agent_id">
+            <div class="rounded-xl border border-zinc-800/50 bg-zinc-900/30 px-5 py-4">
+              <p class="text-sm text-zinc-400 line-through" x-text="b.label || 'Unnamed agent'"></p>
+              <p class="font-mono text-xs text-zinc-700" x-text="b.agent_id"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </main>
+
+    <!-- Revoke confirmation modal -->
+    <div
+      x-show="revokeTarget"
+      x-cloak
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      @keydown.escape.window="revokeTarget = null"
+      @click.self="revokeTarget = null"
+    >
+      <div class="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl" @click.stop>
+        <h3 class="font-medium text-white">Revoke agent?</h3>
+        <p class="mt-2 text-sm text-zinc-400">
+          This will permanently revoke <span class="font-medium text-white" x-text="revokeTarget && (revokeTarget.label || 'this agent')"></span>.
+          All <span x-text="revokeTarget && revokeTarget.device_count"></span> enrolled device(s) will lose the ability to renew tokens.
+        </p>
+        <p class="mt-2 text-xs text-zinc-600">This cannot be undone. The agent will need to re-register.</p>
+        <div class="mt-5 flex justify-end gap-3">
+          <button type="button" @click="revokeTarget = null" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800">Cancel</button>
+          <button type="button" @click="doRevoke()" class="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-600">Revoke</button>
+        </div>
+      </div>
+    </div>
+
+    <style>[x-cloak] { display: none !important; }</style>
+
+    <script>
+      function agentsDash() {
+        return {
+          bindings: [],
+          loading: true,
+          error: "",
+          revokeTarget: null,
+
+          get active() { return this.bindings.filter(b => !b.revoked); },
+          get revoked() { return this.bindings.filter(b => b.revoked); },
+
+          init() {
+            if (!ASAuth.requireRole("person")) return;
+            this.load();
+          },
+          signOut() { ASAuth.clear(); location.href = "index.html"; },
+
+          async load() {
+            this.error = "";
+            try {
+              var data = await ASApi.fetchJson("/person/bindings");
+              // Preserve per-row state
+              var stateMap = {};
+              this.bindings.forEach(b => { stateMap[b.agent_id] = { _expanded: b._expanded, _msg: b._msg, _err: b._err }; });
+              this.bindings = data.map(b => Object.assign(b, stateMap[b.agent_id] || {}));
+            } catch (e) {
+              this.error = e.message || String(e);
+            } finally {
+              this.loading = false;
+            }
+          },
+
+          confirmRevoke(b) { this.revokeTarget = b; },
+
+          async doRevoke() {
+            if (!this.revokeTarget) return;
+            var b = this.revokeTarget;
+            this.revokeTarget = null;
+            try {
+              await ASApi.fetchJson("/person/bindings/" + encodeURIComponent(b.agent_id) + "/revoke", { method: "POST" });
+              await this.load();
+            } catch (e) {
+              b._err = e.message || String(e);
+            }
+          },
+
+          copy(text) { copyToClipboard(text); },
+        };
+      }
+    </script>
+  </body>
+</html>
