@@ -82,7 +82,11 @@ Sign into the portal with the value of `AAUTH_PS_ADMIN_TOKEN` / `AAUTH_AS_PERSON
 
 ## Walkthrough Scripts (unified portal)
 
-The commands below assume the portal is running on `http://127.0.0.1:8765` with the env vars from [Unified Portal](#unified-portal). For running the same scripts against **only** `ps.http.app` or **only** `agent_server.http.app`, see [Standalone Person Server and Agent Server](#standalone-person-server-and-agent-server).
+The commands below assume the portal is running on `http://127.0.0.1:8765` unless a snippet says otherwise.
+
+**Agent registration from the command line:** there are two modes. **`./scripts/agent-server-walkthrough.sh`** only works when **`AAUTH_AS_INSECURE_DEV=true`** (it sends stub signature bytes). With **`AAUTH_AS_INSECURE_DEV=false`**, Agent Server routes verify real HTTP message signatures — use **`scripts/agent-server-signed-walkthrough.py`** instead ([§ Agent Server Walkthrough (real signatures)](#agent-server-walkthrough-real-signatures)), with both `AAUTH_PS_INSECURE_DEV` and `AAUTH_AS_INSECURE_DEV` set to `false` if you want HWK verified on Person Server routes too.
+
+For the quick-start env from [Unified Portal](#unified-portal) (both insecure flags `true`), use the shell walkthrough as written. For running the same scripts against **only** `ps.http.app` or **only** `agent_server.http.app`, see [Standalone Person Server and Agent Server](#standalone-person-server-and-agent-server).
 
 ### Person Server Demo
 
@@ -140,7 +144,7 @@ Notes:
 
 ### Agent Server Walkthrough (insecure dev)
 
-`./scripts/agent-server-walkthrough.sh` verifies the registration and approval flow using structurally valid signature headers while `AAUTH_AS_INSECURE_DEV=true`.
+`./scripts/agent-server-walkthrough.sh` verifies the registration and approval flow using structurally valid signature headers while **`AAUTH_AS_INSECURE_DEV=true`**. If the portal is started with **`AAUTH_AS_INSECURE_DEV=false`**, `POST /register` returns **401** for this script — that is expected; switch to [Agent Server Walkthrough (real signatures)](#agent-server-walkthrough-real-signatures).
 
 ```bash
 AUTO=1 \
