@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="aauth-favicon.svg" />
     <title>Person Portal</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
@@ -12,9 +13,21 @@
   <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased" x-data="portalDash()" x-init="init()">
     <header class="border-b border-zinc-800 bg-zinc-900/50">
       <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-4">
-        <div>
-          <h1 class="text-lg font-semibold text-white">Person Portal</h1>
-          <p class="text-xs text-zinc-500">Agents, missions, and token requests</p>
+        <div class="flex min-w-0 flex-wrap items-center gap-3 sm:gap-4">
+          <a
+            href="https://www.aauth.dev/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="shrink-0 leading-none"
+            aria-label="AAuth"
+          >
+            <img src="aauth-wordmark.svg" alt="" width="65" height="21" class="h-6 w-auto" />
+          </a>
+          <span class="hidden h-8 w-px shrink-0 bg-zinc-800 sm:block" aria-hidden="true"></span>
+          <div class="min-w-0">
+            <h1 class="text-lg font-semibold text-white">Person Portal</h1>
+            <p class="text-xs text-zinc-500">Agents, missions, and token requests</p>
+          </div>
         </div>
         <nav class="flex flex-wrap gap-2">
           <template x-for="t in tabs" :key="t.id">

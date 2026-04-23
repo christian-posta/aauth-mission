@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#0a0a0f"/>
+  <g transform="translate(16,16) scale(1.1, 0.9) translate(-16,-16)">
+    <text x="1" y="29" font-family="JetBrains Mono, ui-monospace, monospace" font-size="36" font-weight="600" fill="#4ade80">A</text>
+    <text x="9" y="29" font-family="JetBrains Mono, ui-monospace, monospace" font-size="36" font-weight="600" fill="#4ade80" opacity="0.5">A</text>
+  </g>
+</svg>

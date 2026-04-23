@@ -3,13 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="aauth-favicon.svg" />
     <title>Consent — AAuth</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
   </head>
   <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
     <div class="mx-auto max-w-lg px-4 py-10" x-data="consentPage()" x-init="init()">
-      <h1 class="text-xl font-semibold text-white">Authorization request</h1>
+      <div class="flex flex-wrap items-center gap-3">
+        <a
+          href="https://www.aauth.dev/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="shrink-0 leading-none"
+          aria-label="AAuth"
+        >
+          <img src="aauth-wordmark.svg" alt="" width="65" height="21" class="h-6 w-auto" />
+        </a>
+        <span class="hidden h-6 w-px bg-zinc-800 sm:block" aria-hidden="true"></span>
+        <h1 class="text-xl font-semibold text-white">Authorization request</h1>
+      </div>
       <p class="mt-1 text-sm text-zinc-400">Review what the agent is asking for, then approve or deny.</p>
 
       <div x-show="loading" class="mt-8 text-zinc-400">Loading…</div>

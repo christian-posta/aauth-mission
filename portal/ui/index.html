@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="aauth-favicon.svg" />
     <title>Sign in — Person Portal</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="js/auth.js"></script>
@@ -10,6 +11,15 @@
   </head>
   <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
     <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4">
+      <a
+        href="https://www.aauth.dev/"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="mb-6 inline-block leading-none"
+        aria-label="AAuth"
+      >
+        <img src="aauth-wordmark.svg" alt="" width="78" height="25" class="h-7 w-auto opacity-90 hover:opacity-100" />
+      </a>
       <h1 class="text-xl font-semibold text-white">Person Portal</h1>
       <p class="mt-1 text-sm text-zinc-400">Enter your admin token to open the dashboard.</p>
       <form id="login-form" class="mt-8 space-y-4">
