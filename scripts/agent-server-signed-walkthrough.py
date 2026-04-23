@@ -191,7 +191,10 @@ def main() -> int:
 
     _print_section("POST /register")
     reg_url = f"{base}/register"
-    body_obj = {"stable_pub": stable_pub_jwk, "label": "Signed walkthrough client"}
+    body_obj = {
+        "stable_pub": stable_pub_jwk,
+        "agent_name": "Signed walkthrough client",
+    }
     body_bytes = json.dumps(body_obj).encode()
     print(
         "Note: body carries stable_pub (long-term identity). Ephemeral public key is in "

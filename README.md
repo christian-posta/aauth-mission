@@ -351,7 +351,7 @@ uvicorn agent_server.http.app:app --host 127.0.0.1 --port 8800
 - `POST /person/registrations/{id}/deny`
 - `POST /person/registrations/{id}/link`
 - `GET /person/bindings`
-- `POST /person/bindings` — create a binding from a stable public JWK (`stable_pub` + optional `label`); the agent still calls `POST /register` to obtain a token
+- `POST /person/bindings` — create a binding from a stable public JWK (`stable_pub` + required `agent_name`); the agent still calls `POST /register` to obtain a token
 - `POST /person/bindings/{agent_id}/revoke`
 
 ## Tests
@@ -362,4 +362,4 @@ Run the smoke tests:
 pytest
 ```
 
-Current smoke coverage is in [tests/test_ps_api_smoke.py](/Users/ceposta/python/aauth-person-server/tests/test_ps_api_smoke.py).
+Coverage includes [tests/test_ps_api_smoke.py](tests/test_ps_api_smoke.py) (Person Server) and [tests/test_agent_server_register.py](tests/test_agent_server_register.py) (Agent Server `agent_name` / registration body validation).

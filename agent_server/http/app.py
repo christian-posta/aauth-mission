@@ -35,6 +35,7 @@ from agent_server.exceptions import (
     PendingNotFoundError,
     StableKeyAlreadyBoundError,
 )
+from agent_server.http.bodies import RegisterBody
 from agent_server.http.config import AgentServerSettings
 from agent_server.http.deps import get_container, get_settings, require_http_sig, require_person
 from agent_server.http.errors import aauth_json_error
@@ -47,10 +48,6 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 # Request body models
 # ------------------------------------------------------------------
-
-class RegisterBody(BaseModel):
-    stable_pub: dict[str, Any] = Field(..., description="Agent's stable Ed25519 public key (JWK)")
-    label: str | None = Field(default=None, description="Human-readable device label")
 
 
 class LinkBody(BaseModel):
@@ -170,7 +167,7 @@ def create_agent_app(settings: AgentServerSettings | None = None) -> FastAPI:
         result = handle_register(
             verified=verified,
             stable_pub=body.stable_pub,
-            label=body.label,
+            agent_name=body.agent_name,
             registrations=container.registrations,
             bindings=container.bindings,
             token_factory=container.token_factory,
@@ -311,7 +308,7 @@ def create_agent_app(settings: AgentServerSettings | None = None) -> FastAPI:
         try:
             result = handle_create_binding_from_stable_pub(
                 stable_pub=body.stable_pub,
-                label=body.label,
+                agent_name=body.agent_name,
                 bindings=container.bindings,
                 server_domain=settings.server_domain,
             )

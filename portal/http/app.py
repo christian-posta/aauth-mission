@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
 from agent_server.api.metadata import well_known_agent_payload
+from agent_server.http.bodies import RegisterBody
 from agent_server.api.person_routes import (
     handle_approve,
     handle_create_binding_from_stable_pub,
@@ -196,11 +197,6 @@ class AgentInteractionBody(BaseModel):
 # ---------------------------------------------------------------------------
 # AS body models
 # ---------------------------------------------------------------------------
-
-
-class RegisterBody(BaseModel):
-    stable_pub: dict[str, Any] = Field(..., description="Agent's stable Ed25519 public key (JWK)")
-    label: str | None = Field(default=None, description="Human-readable device label")
 
 
 class LinkBody(BaseModel):
@@ -752,7 +748,7 @@ def create_portal_app(
         result = handle_register(
             verified=verified,
             stable_pub=body.stable_pub,
-            label=body.label,
+            agent_name=body.agent_name,
             registrations=container.registrations,
             bindings=container.bindings,
             token_factory=container.token_factory,
@@ -881,7 +877,7 @@ def create_portal_app(
         try:
             result = handle_create_binding_from_stable_pub(
                 stable_pub=body.stable_pub,
-                label=body.label,
+                agent_name=body.agent_name,
                 bindings=container.bindings,
                 server_domain=settings.server_domain,
             )

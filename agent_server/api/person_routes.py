@@ -36,11 +36,11 @@ def handle_approve(
     agent_id = generate_agent_id(server_domain)
     binding = bindings.create(
         agent_id=agent_id,
-        label=reg.label,
+        agent_name=reg.agent_name,
         stable_jkt=reg.stable_jkt,
     )
     registrations.approve(pending_id)
-    return {"agent_id": binding.agent_id, "label": binding.label}
+    return {"agent_id": binding.agent_id, "agent_name": binding.agent_name}
 
 
 def handle_deny(
@@ -83,7 +83,7 @@ def handle_link(
         raise
 
     registrations.approve(pending_id)
-    return {"agent_id": binding.agent_id, "label": reg.label}
+    return {"agent_id": binding.agent_id, "agent_name": reg.agent_name}
 
 
 def handle_list_registrations(
@@ -111,7 +111,7 @@ def handle_revoke_binding(
 
 def handle_create_binding_from_stable_pub(
     stable_pub: dict[str, Any],
-    label: str | None,
+    agent_name: str,
     bindings: MemoryBindingStore,
     server_domain: str,
 ) -> dict[str, Any]:
@@ -130,10 +130,10 @@ def handle_create_binding_from_stable_pub(
         raise StableKeyAlreadyBoundError(existing.agent_id)
 
     agent_id = generate_agent_id(server_domain)
-    binding = bindings.create(agent_id=agent_id, label=label, stable_jkt=stable_jkt)
+    binding = bindings.create(agent_id=agent_id, agent_name=agent_name, stable_jkt=stable_jkt)
     return {
         "agent_id": binding.agent_id,
-        "label": binding.label,
+        "agent_name": binding.agent_name,
         "stable_jkt": stable_jkt,
     }
 
@@ -145,7 +145,7 @@ def handle_create_binding_from_stable_pub(
 def _reg_dict(r: Any) -> dict[str, Any]:
     return {
         "id": r.id,
-        "label": r.label,
+        "agent_name": r.agent_name,
         "stable_jkt": r.stable_jkt,
         "created_at": r.created_at.isoformat(),
         "expires_at": r.expires_at.isoformat(),
@@ -156,7 +156,7 @@ def _reg_dict(r: Any) -> dict[str, Any]:
 def _binding_dict(b: Any) -> dict[str, Any]:
     return {
         "agent_id": b.agent_id,
-        "label": b.label,
+        "agent_name": b.agent_name,
         "created_at": b.created_at.isoformat(),
         "device_count": len(b.stable_key_thumbprints),
         "stable_key_thumbprints": b.stable_key_thumbprints,

@@ -12,7 +12,7 @@ class PendingRegistration:
     id: str
     stable_pub: dict[str, Any]       # JWK of the agent's stable public key
     ephemeral_pub: dict[str, Any]    # JWK of the agent's ephemeral public key
-    label: str | None                # Human-readable name from the agent
+    agent_name: str                 # Human-readable name from the agent
     stable_jkt: str                  # urn:jkt:sha-256:<thumbprint>
     created_at: datetime
     expires_at: datetime
@@ -22,7 +22,7 @@ class PendingRegistration:
 @dataclass
 class Binding:
     agent_id: str                            # aauth:<uuid>@<domain>
-    label: str | None
+    agent_name: str
     created_at: datetime
     stable_key_thumbprints: list[str] = field(default_factory=list)  # urn:jkt:sha-256:...
     revoked: bool = False

@@ -12,10 +12,10 @@ class MemoryBindingStore:
         self._by_agent_id: dict[str, Binding] = {}
         self._jkt_index: dict[str, str] = {}  # stable_jkt -> agent_id
 
-    def create(self, agent_id: str, label: str | None, stable_jkt: str) -> Binding:
+    def create(self, agent_id: str, agent_name: str, stable_jkt: str) -> Binding:
         binding = Binding(
             agent_id=agent_id,
-            label=label,
+            agent_name=agent_name,
             created_at=datetime.now(timezone.utc),
             stable_key_thumbprints=[stable_jkt],
             revoked=False,
@@ -32,6 +32,12 @@ class MemoryBindingStore:
 
     def get_by_agent_id(self, agent_id: str) -> Binding | None:
         return self._by_agent_id.get(agent_id)
+
+    def update_agent_name(self, agent_id: str, agent_name: str) -> None:
+        binding = self._by_agent_id.get(agent_id)
+        if binding is None:
+            raise KeyError(agent_id)
+        binding.agent_name = agent_name.strip()
 
     def list_all(self) -> list[Binding]:
         return sorted(self._by_agent_id.values(), key=lambda b: b.created_at)

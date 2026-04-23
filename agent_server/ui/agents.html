@@ -48,7 +48,7 @@
             <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <p class="font-medium text-white" x-text="b.label || 'Unnamed agent'"></p>
+                  <p class="font-medium text-white" x-text="b.agent_name || 'Unnamed agent'"></p>
                   <button
                     type="button"
                     class="mt-1 font-mono text-xs text-zinc-600 hover:text-zinc-400"
@@ -106,7 +106,7 @@
         <div class="space-y-3 opacity-50">
           <template x-for="b in revoked" :key="b.agent_id">
             <div class="rounded-xl border border-zinc-800/50 bg-zinc-900/30 px-5 py-4">
-              <p class="text-sm text-zinc-400 line-through" x-text="b.label || 'Unnamed agent'"></p>
+              <p class="text-sm text-zinc-400 line-through" x-text="b.agent_name || 'Unnamed agent'"></p>
               <p class="font-mono text-xs text-zinc-700" x-text="b.agent_id"></p>
             </div>
           </template>
@@ -125,7 +125,7 @@
       <div class="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl" @click.stop>
         <h3 class="font-medium text-white">Revoke agent?</h3>
         <p class="mt-2 text-sm text-zinc-400">
-          This will permanently revoke <span class="font-medium text-white" x-text="revokeTarget && (revokeTarget.label || 'this agent')"></span>.
+          This will permanently revoke <span class="font-medium text-white" x-text="revokeTarget && (revokeTarget.agent_name || 'this agent')"></span>.
           All <span x-text="revokeTarget && revokeTarget.device_count"></span> enrolled device(s) will lose the ability to renew tokens.
         </p>
         <p class="mt-2 text-xs text-zinc-600">This cannot be undone. The agent will need to re-register.</p>

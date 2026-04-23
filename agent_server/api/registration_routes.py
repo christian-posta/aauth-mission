@@ -24,7 +24,7 @@ from agent_server.utils.agent_id import generate_agent_id
 def handle_register(
     verified: VerifiedRequest,
     stable_pub: dict[str, Any],
-    label: str | None,
+    agent_name: str,
     registrations: MemoryPendingRegistrationStore,
     bindings: MemoryBindingStore,
     token_factory: AgentTokenFactory,
@@ -41,6 +41,7 @@ def handle_register(
     # Re-registration of a known device — issue token immediately, no approval needed
     existing = bindings.lookup_by_stable_jkt(stable_jkt)
     if existing is not None and not existing.revoked:
+        bindings.update_agent_name(existing.agent_id, agent_name)
         token = token_factory.issue(
             agent_id=existing.agent_id,
             ephemeral_pub=verified.ephemeral_pub,
@@ -51,7 +52,7 @@ def handle_register(
     reg = registrations.create(
         stable_pub=stable_pub,
         ephemeral_pub=verified.ephemeral_pub,
-        label=label,
+        agent_name=agent_name,
         stable_jkt=stable_jkt,
     )
     return {"immediate": False, "pending_id": reg.id, "expires_at": reg.expires_at}

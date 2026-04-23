@@ -18,7 +18,7 @@ class MemoryPendingRegistrationStore:
         self,
         stable_pub: dict[str, Any],
         ephemeral_pub: dict[str, Any],
-        label: str | None,
+        agent_name: str,
         stable_jkt: str,
         ttl_seconds: int | None = None,
     ) -> PendingRegistration:
@@ -28,7 +28,7 @@ class MemoryPendingRegistrationStore:
             id=secrets.token_urlsafe(16),
             stable_pub=stable_pub,
             ephemeral_pub=ephemeral_pub,
-            label=label,
+            agent_name=agent_name,
             stable_jkt=stable_jkt,
             created_at=now,
             expires_at=now + timedelta(seconds=ttl),
