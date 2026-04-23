@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import aauth
+
 from agent_server.exceptions import (
     BindingNotFoundError,
     DuplicateStableKeyError,
     PendingNotFoundError,
+    StableKeyAlreadyBoundError,
 )
 from agent_server.impl.memory_bindings import MemoryBindingStore
 from agent_server.impl.memory_registrations import MemoryPendingRegistrationStore
@@ -104,6 +107,35 @@ def handle_revoke_binding(
     if binding is None:
         raise BindingNotFoundError(agent_id)
     bindings.revoke(agent_id)
+
+
+def handle_create_binding_from_stable_pub(
+    stable_pub: dict[str, Any],
+    label: str | None,
+    bindings: MemoryBindingStore,
+    server_domain: str,
+) -> dict[str, Any]:
+    """POST /person/bindings — trust a stable public JWK without a pending registration.
+
+    The agent still obtains an ``agent_token`` by calling ``POST /register`` with HTTP
+    signatures (immediate issuance once this binding exists).
+    """
+    try:
+        stable_jkt = f"urn:jkt:sha-256:{aauth.calculate_jwk_thumbprint(stable_pub)}"
+    except Exception as exc:
+        raise ValueError("Invalid stable_pub JWK") from exc
+
+    existing = bindings.lookup_by_stable_jkt(stable_jkt)
+    if existing is not None and not existing.revoked:
+        raise StableKeyAlreadyBoundError(existing.agent_id)
+
+    agent_id = generate_agent_id(server_domain)
+    binding = bindings.create(agent_id=agent_id, label=label, stable_jkt=stable_jkt)
+    return {
+        "agent_id": binding.agent_id,
+        "label": binding.label,
+        "stable_jkt": stable_jkt,
+    }
 
 
 # ------------------------------------------------------------------

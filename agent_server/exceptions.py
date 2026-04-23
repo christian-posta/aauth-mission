@@ -36,6 +36,16 @@ class DuplicateStableKeyError(AgentServerError):
     pass
 
 
+class StableKeyAlreadyBoundError(AgentServerError):
+    """Raised when person tries to create a binding for a stable key that already has an active binding."""
+
+    def __init__(self, agent_id: str) -> None:
+        self.agent_id = agent_id
+        super().__init__(
+            f"This stable key is already bound to active agent {agent_id}."
+        )
+
+
 class ReplayError(AgentServerError):
     """Raised when a replayed HTTP signature is detected."""
     pass

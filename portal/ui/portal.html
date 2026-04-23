@@ -84,7 +84,14 @@
               <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Active agents</h2>
               <p class="mt-0.5 text-xs text-zinc-600">Bindings and revoke</p>
             </div>
-            <button type="button" @click="loadBindings()" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm hover:bg-zinc-800">Refresh</button>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                @click="openManualBindModal()"
+                class="rounded-lg border border-sky-700/60 bg-sky-950/40 px-3 py-1.5 text-sm text-sky-300 hover:bg-sky-950/70"
+              >Add agent binding</button>
+              <button type="button" @click="loadBindings()" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm hover:bg-zinc-800">Refresh</button>
+            </div>
           </div>
           <p x-show="bindingsError" class="mt-4 text-sm text-red-400" x-text="bindingsError"></p>
           <div x-show="bindingsLoading" class="mt-6 text-sm text-zinc-500">Loading…</div>
@@ -324,6 +331,64 @@
       </div>
     </div>
 
+    <!-- Add agent binding (stable JWK) modal -->
+    <div
+      x-show="manualBindOpen"
+      x-cloak
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      @keydown.escape.window="closeManualBindModal()"
+      @click.self="closeManualBindModal()"
+    >
+      <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl" @click.stop>
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="text-lg font-medium text-white">Add agent binding</h3>
+            <p class="mt-2 max-w-xl text-xs text-zinc-500">
+              Paste the agent&apos;s stable public JWK (JSON). No token is issued here; the agent still calls
+              <code class="rounded bg-zinc-950 px-1 py-0.5 font-mono text-zinc-400">POST /register</code>
+              with HTTP message signatures to get a token once this binding exists. Self-serve registration is unchanged.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="shrink-0 text-2xl leading-none text-zinc-500 hover:text-white"
+            @click="closeManualBindModal()"
+            aria-label="Close"
+          >&times;</button>
+        </div>
+        <div class="mt-5 space-y-3">
+          <label class="block text-xs font-medium text-zinc-500">Stable public key (JWK JSON)</label>
+          <textarea
+            x-model="manualStablePubJson"
+            rows="6"
+            class="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-sky-600 focus:outline-none"
+            placeholder='{"kty":"OKP","crv":"Ed25519","x":"..."}'
+            spellcheck="false"
+          ></textarea>
+          <div>
+            <label class="block text-xs font-medium text-zinc-500">Label (optional)</label>
+            <input
+              type="text"
+              x-model="manualLabel"
+              class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-sky-600 focus:outline-none"
+              placeholder="e.g. CI runner west"
+            />
+          </div>
+          <p x-show="manualBindError" class="text-sm text-red-400" x-text="manualBindError"></p>
+        </div>
+        <div class="mt-6 flex flex-wrap justify-end gap-3">
+          <button type="button" @click="closeManualBindModal()" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800">Cancel</button>
+          <button
+            type="button"
+            @click="createManualBinding()"
+            :disabled="manualBindSubmitting"
+            class="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+            x-text="manualBindSubmitting ? 'Creating…' : 'Create binding'"
+          ></button>
+        </div>
+      </div>
+    </div>
+
     <!-- Revoke binding modal -->
     <div
       x-show="revokeBindingTarget"
@@ -414,6 +479,11 @@
           pendingLoading: true,
           pendingError: "",
           _pendingTimer: null,
+          manualStablePubJson: "",
+          manualLabel: "",
+          manualBindOpen: false,
+          manualBindError: "",
+          manualBindSubmitting: false,
 
           get activeBindings() {
             return this.bindings.filter(function (b) { return !b.revoked; });
@@ -451,6 +521,68 @@
             var ms = new Date(expiresAt) - new Date();
             if (ms < 5 * 60 * 1000) return "text-amber-400 font-medium";
             return "";
+          },
+
+          openManualBindModal() {
+            this.manualBindOpen = true;
+            this.manualBindError = "";
+          },
+
+          closeManualBindModal() {
+            this.manualBindOpen = false;
+            if (!this.manualBindSubmitting) {
+              this.manualBindError = "";
+            }
+          },
+
+          async createManualBinding() {
+            this.manualBindError = "";
+            var raw = (this.manualStablePubJson || "").trim();
+            if (!raw) {
+              this.manualBindError = "Paste the stable public key (JWK JSON).";
+              return;
+            }
+            var stable_pub;
+            try {
+              stable_pub = JSON.parse(raw);
+            } catch (e) {
+              this.manualBindError = "Invalid JSON.";
+              return;
+            }
+            if (!stable_pub || typeof stable_pub !== "object" || Array.isArray(stable_pub)) {
+              this.manualBindError = "stable_pub must be a JSON object.";
+              return;
+            }
+            var label = (this.manualLabel || "").trim();
+            this.manualBindSubmitting = true;
+            try {
+              var res = await PortalApi.fetchJson("/person/bindings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  stable_pub: stable_pub,
+                  label: label ? label : null,
+                }),
+              });
+              this.manualStablePubJson = "";
+              this.manualLabel = "";
+              var newAgentId = res.agent_id || "";
+              await this.loadBindings();
+              this.manualBindOpen = false;
+              if (newAgentId) {
+                var row = this.bindings.find(function (b) {
+                  return b.agent_id === newAgentId;
+                });
+                if (row) {
+                  row._msg =
+                    "Binding created. The agent should call POST /register to obtain a token.";
+                }
+              }
+            } catch (e) {
+              this.manualBindError = e.message || String(e);
+            } finally {
+              this.manualBindSubmitting = false;
+            }
           },
 
           async loadRegs() {

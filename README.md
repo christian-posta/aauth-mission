@@ -351,6 +351,7 @@ uvicorn agent_server.http.app:app --host 127.0.0.1 --port 8800
 - `POST /person/registrations/{id}/deny`
 - `POST /person/registrations/{id}/link`
 - `GET /person/bindings`
+- `POST /person/bindings` — create a binding from a stable public JWK (`stable_pub` + optional `label`); the agent still calls `POST /register` to obtain a token
 - `POST /person/bindings/{agent_id}/revoke`
 
 ## Tests

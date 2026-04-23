@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 from agent_server.api.metadata import well_known_agent_payload
 from agent_server.api.person_routes import (
     handle_approve,
+    handle_create_binding_from_stable_pub,
     handle_deny,
     handle_link,
     handle_list_bindings,
@@ -32,6 +33,7 @@ from agent_server.exceptions import (
     PendingDeniedError as ASPendingDeniedError,
     PendingExpiredError as ASPendingExpiredError,
     PendingNotFoundError,
+    StableKeyAlreadyBoundError,
 )
 from agent_server.http.config import AgentServerSettings
 from agent_server.http.errors import aauth_json_error as as_aauth_json_error
@@ -396,6 +398,19 @@ def create_portal_app(
     @app.exception_handler(DuplicateStableKeyError)
     async def dup_key_handler(_req: Request, exc: DuplicateStableKeyError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"error": "conflict", "detail": str(exc)})
+
+    @app.exception_handler(StableKeyAlreadyBoundError)
+    async def stable_key_bound_handler(
+        _req: Request, exc: StableKeyAlreadyBoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "conflict",
+                "detail": str(exc),
+                "agent_id": exc.agent_id,
+            },
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -855,6 +870,24 @@ def create_portal_app(
         container: Annotated[ASContainer, Depends(get_container)],
     ) -> list[dict[str, Any]]:
         return handle_list_bindings(container.bindings)
+
+    @app.post("/person/bindings", status_code=201)
+    def create_binding_from_stable_pub(
+        body: RegisterBody,
+        _person: Annotated[None, Depends(require_portal_person_api)],
+        container: Annotated[ASContainer, Depends(get_container)],
+        settings: Annotated[AgentServerSettings, Depends(get_as_settings)],
+    ) -> JSONResponse:
+        try:
+            result = handle_create_binding_from_stable_pub(
+                stable_pub=body.stable_pub,
+                label=body.label,
+                bindings=container.bindings,
+                server_domain=settings.server_domain,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(status_code=201, content=result)
 
     @app.post("/person/bindings/{agent_id}/revoke", status_code=200)
     def revoke_binding(
