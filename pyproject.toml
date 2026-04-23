@@ -19,13 +19,14 @@ dependencies = [
 [tool.setuptools.package-data]
 "ps" = ["http/static/**/*"]
 "agent_server" = ["ui/**/*", "ui/js/**/*"]
+"portal" = ["ui/**/*", "ui/js/**/*"]
 
 [project.optional-dependencies]
 dev = ["httpx>=0.26.0", "pytest>=8.0.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ps*", "agent_server*"]
+include = ["ps*", "agent_server*", "portal*"]
 
 [build-system]
 requires = ["setuptools>=69.0"]

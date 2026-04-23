@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 # Exercise Person Server REST endpoints against a running server (default: http://127.0.0.1:8765).
 #
+# Works against both the unified portal (portal.http.app) and the standalone Person Server
+# (ps.http.app) — PS routes are at the same paths in both.
+#
 # Usage:
 #   chmod +x scripts/ps-demo.sh
-#   ./scripts/ps-demo.sh
+#   ./scripts/ps-demo.sh                              # unified portal on port 8765
+#   BASE_URL=http://127.0.0.1:8766 ./scripts/ps-demo.sh  # standalone PS on different port
 #   BASE_URL=http://127.0.0.1:8080 AGENT_ID=my-agent ./scripts/ps-demo.sh
 #
 # Start the server first, e.g.:
-#   source .venv/bin/activate && uvicorn ps.http.app:app --host 127.0.0.1 --port 8765
+#   # Unified portal (recommended):
+#   AAUTH_PS_ADMIN_TOKEN=mytoken AAUTH_AS_PERSON_TOKEN=mytoken \
+#     AAUTH_PS_INSECURE_DEV=true AAUTH_AS_INSECURE_DEV=true \
+#     uvicorn portal.http.app:app --host 127.0.0.1 --port 8765
+#
+#   # Standalone PS only:
+#   uvicorn ps.http.app:app --host 127.0.0.1 --port 8766
 
 set -euo pipefail
 

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in — Person Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+  </head>
+  <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+    <div class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4">
+      <h1 class="text-xl font-semibold text-white">Person Portal</h1>
+      <p class="mt-1 text-sm text-zinc-400">Enter your admin token to open the dashboard.</p>
+      <form id="login-form" class="mt-8 space-y-4">
+        <div>
+          <label class="block text-xs font-medium uppercase text-zinc-500">Token</label>
+          <input
+            id="token"
+            type="password"
+            autocomplete="current-password"
+            class="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-sky-500 focus:outline-none"
+            placeholder="AAUTH_PS_ADMIN_TOKEN"
+            required
+          />
+        </div>
+        <p id="err" class="hidden text-sm text-red-400"></p>
+        <button
+          type="submit"
+          class="w-full rounded-lg bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-500"
+        >
+          Sign in
+        </button>
+      </form>
+    </div>
+    <script>
+      document.getElementById("login-form").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var err = document.getElementById("err");
+        var token = document.getElementById("token").value.trim();
+        err.classList.add("hidden");
+        err.textContent = "";
+        try {
+          var r = await fetch("/missions", {
+            headers: { Authorization: "Bearer " + token },
+          });
+          if (!r.ok) {
+            var body = null;
+            try { body = await r.json(); } catch (x) { body = null; }
+            var msg = (body && body.detail) || r.statusText || "Sign-in failed";
+            throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+          }
+          PortalAuth.setSession(token, "person");
+          location.href = "portal.html";
+        } catch (ex) {
+          err.textContent = ex.message || String(ex);
+          err.classList.remove("hidden");
+        }
+      });
+    </script>
+  </body>
+</html>

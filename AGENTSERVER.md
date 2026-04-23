@@ -58,15 +58,55 @@ Agent laptop                   Agent Server               Person (you)
 
 ## 2. Start the Server
 
-### With uv (recommended)
+There are two ways to run the Agent Server: as a **unified portal** (combined with the Person Server, recommended for end-to-end testing) or as a **standalone** service.
+
+### Unified portal (recommended — one process, one port)
+
+Combines the Agent Server and Person Server into a single FastAPI app. See `README.md §Unified Person Portal` for full details.
 
 ```bash
 cd /path/to/aauth-person-server
+uv pip install -e ".[dev]"   # first time only
 
-# Install dependencies (first time only)
+export AAUTH_PS_PUBLIC_ORIGIN=http://localhost:8765
+export AAUTH_AS_PUBLIC_ORIGIN=http://localhost:8765
+export AAUTH_PS_ADMIN_TOKEN=mytoken
+export AAUTH_PS_INSECURE_DEV=true
+export AAUTH_AS_PERSON_TOKEN=mytoken
+export AAUTH_AS_INSECURE_DEV=true   # omit for production signatures
+
+.venv/bin/uvicorn portal.http.app:app --reload --port 8765
+```
+
+> **Note:** In portal mode the `AAUTH_AS_ISSUER` and `AAUTH_AS_PUBLIC_ORIGIN` env vars are **overridden** by the portal to equal `AAUTH_PS_PUBLIC_ORIGIN`. Both well-known docs will advertise `issuer = http://localhost:8765`. The standalone AS env vars still apply when running the Agent Server by itself.
+
+> **Registration poll path change:** in the portal the pending poll endpoint is `GET /register/pending/{id}` (not `/pending/{id}`, which the Person Server uses for token flows). See [§5](#5-testing-with-curl-insecure_dev-mode) and [§6](#6-testing-with-real-http-signatures-python) for how to run the walkthrough scripts against the portal.
+
+Verify the portal is up:
+
+```bash
+curl -s http://localhost:8765/.well-known/aauth-agent.json | jq .
+```
+
+Expected (portal overrides `issuer` and `client_name`):
+```json
+{
+  "issuer": "http://localhost:8765",
+  "jwks_uri": "http://localhost:8765/.well-known/jwks.json",
+  "client_name": "AAuth Person Portal",
+  "registration_endpoint": "http://localhost:8765/register",
+  "refresh_endpoint": "http://localhost:8765/refresh"
+}
+```
+
+### Standalone Agent Server (insecure_dev mode)
+
+Use when you want to run the Agent Server independently of the Person Server.
+
+```bash
+cd /path/to/aauth-person-server
 uv pip install -e ".[dev]"
 
-# Start with signature verification disabled (easiest for testing)
 AAUTH_AS_PUBLIC_ORIGIN=http://localhost:8800 \
 AAUTH_AS_ISSUER=http://localhost:8800 \
 AAUTH_AS_SERVER_DOMAIN=localhost \
@@ -75,7 +115,7 @@ AAUTH_AS_INSECURE_DEV=true \
 .venv/bin/uvicorn agent_server.http.app:app --reload --port 8800
 ```
 
-### With production signatures (no insecure_dev)
+### Standalone Agent Server (production signatures)
 
 ```bash
 AAUTH_AS_PUBLIC_ORIGIN=https://agent-server.example \
@@ -88,7 +128,7 @@ AAUTH_AS_SIGNING_KEY_PATH=./keys/signing.pem \
 
 On first run with `SIGNING_KEY_PATH` set, the server auto-generates and saves an Ed25519 key. On restart it loads the existing key, so issued tokens remain verifiable.
 
-### Verify it's up
+### Verify standalone AS is up
 
 ```bash
 curl -s http://localhost:8800/.well-known/aauth-agent.json | jq .
@@ -133,17 +173,17 @@ All variables use the `AAUTH_AS_` prefix.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AAUTH_AS_PUBLIC_ORIGIN` | `http://localhost:8800` | Base URL in metadata. Must match browser origin for UI links to work. |
-| `AAUTH_AS_ISSUER` | `https://agent-server.example` | `iss` claim in issued agent tokens. |
+| `AAUTH_AS_PUBLIC_ORIGIN` | `http://localhost:8800` | Base URL in metadata. Must match browser origin for UI links to work. **Overridden by the portal** to equal `AAUTH_PS_PUBLIC_ORIGIN`. |
+| `AAUTH_AS_ISSUER` | `https://agent-server.example` | `iss` claim in issued agent tokens. **Overridden by the portal** to equal `AAUTH_PS_PUBLIC_ORIGIN`. |
 | `AAUTH_AS_SERVER_DOMAIN` | `agent-server.example` | Domain part of generated `aauth:<uuid>@<domain>` agent IDs. |
-| `AAUTH_AS_PERSON_TOKEN` | `changeme` | Bearer token for all `/person/*` endpoints. **Change this.** |
+| `AAUTH_AS_PERSON_TOKEN` | `changeme` | Bearer token for all `/person/*` endpoints. **Change this.** In the portal, `AAUTH_PS_ADMIN_TOKEN` is also accepted on `/person/*`. |
 | `AAUTH_AS_INSECURE_DEV` | `false` | Skip HTTP signature verification. Safe only for local development. |
 | `AAUTH_AS_SIGNING_KEY_PATH` | *(unset)* | Path to Ed25519 PEM. Auto-generated if unset (ephemeral — tokens won't survive restarts). |
 | `AAUTH_AS_PREVIOUS_KEY_PATH` | *(unset)* | Previous signing key PEM, kept in JWKS during rotation transition. |
 | `AAUTH_AS_AGENT_TOKEN_LIFETIME` | `86400` | Token lifetime in seconds (max 86400 = 24h). |
 | `AAUTH_AS_REGISTRATION_TTL` | `3600` | How long a pending registration stays open before auto-expiry (seconds). |
 | `AAUTH_AS_SIGNATURE_WINDOW` | `60` | Allowed clock skew for HTTP signature `created` timestamp (seconds). |
-| `AAUTH_AS_CLIENT_NAME` | `AAuth Agent Server` | Human-readable name in well-known metadata. |
+| `AAUTH_AS_CLIENT_NAME` | `AAuth Agent Server` | Human-readable name in well-known metadata. Set to `"AAuth Person Portal"` by the portal. |
 
 **Startup warning:** If `AAUTH_AS_PERSON_TOKEN=changeme` and `INSECURE_DEV=false`, the server logs a warning on startup. Change the token before exposing it on a network.
 
@@ -151,9 +191,19 @@ All variables use the `AAUTH_AS_` prefix.
 
 ## 4. UI Walkthrough
 
-The agent server ships a built-in management UI served at `/ui/`. All pages are static HTML + Alpine.js and require no JavaScript bundling.
+### Portal UI (recommended)
 
-### Verify UI is reachable
+When running the unified portal, open **`http://localhost:8765/ui/index.html`** in your browser. The portal dashboard combines agent management (Agents tab: pending registrations, active bindings) with mission and token-request management in a single 3-tab page. Sign in with the value of `AAUTH_PS_ADMIN_TOKEN` / `AAUTH_AS_PERSON_TOKEN`.
+
+```bash
+curl -so /dev/null -w "%{http_code}" http://localhost:8765/ui/index.html   # 200
+curl -so /dev/null -w "%{http_code}" http://localhost:8765/ui/portal.html  # 200
+curl -so /dev/null -w "%{http_code}" http://localhost:8765/ui/consent.html # 200
+```
+
+### Standalone Agent Server UI
+
+The standalone agent server ships its own management UI at `/ui/`. All pages are static HTML + Alpine.js.
 
 ```bash
 curl -si http://localhost:8800/ui/ | head -2
@@ -167,7 +217,7 @@ curl -so /dev/null -w "%{http_code}" http://localhost:8800/ui/registrations.html
 curl -so /dev/null -w "%{http_code}" http://localhost:8800/ui/agents.html         # 200
 ```
 
-### Sign in (`index.html`)
+### Sign in (`index.html`) — standalone AS
 
 Open `http://localhost:8800/ui/` in your browser.
 
@@ -255,18 +305,37 @@ From the repo root (with the server already running):
 ```bash
 chmod +x scripts/agent-server-walkthrough.sh   # once
 
-# Interactive: pauses between steps; optional revoke prompt at the end
-./scripts/agent-server-walkthrough.sh
+# --- Against the unified portal (port 8765) ---
+# PENDING_POLL_PREFIX is required: the portal uses /register/pending/{id}
+BASE=http://localhost:8765 PERSON_TOKEN=mytoken \
+  PENDING_POLL_PREFIX=/register/pending \
+  ./scripts/agent-server-walkthrough.sh
 
-# Match your server URL and person token
+# Non-interactive against the portal:
+AUTO=1 BASE=http://localhost:8765 PENDING_POLL_PREFIX=/register/pending \
+  ./scripts/agent-server-walkthrough.sh
+
+# --- Against the standalone Agent Server (port 8800, default) ---
+# No PENDING_POLL_PREFIX needed (uses /pending/{id})
+./scripts/agent-server-walkthrough.sh
 BASE=http://localhost:8800 PERSON_TOKEN=mytoken ./scripts/agent-server-walkthrough.sh
 
-# Non-interactive: no pauses; skips revoke (destructive)
+# Non-interactive, standalone:
 AUTO=1 ./scripts/agent-server-walkthrough.sh
 
-# Core flow only: register → approve → token checks (no re-register / list / revoke)
+# Core flow only (no re-register / list / revoke):
 AUTO=1 SKIP_OPTIONAL=1 ./scripts/agent-server-walkthrough.sh
 ```
+
+**Environment variables:**
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `BASE` | `http://localhost:8800` | Server origin |
+| `PERSON_TOKEN` | `mytoken` | Bearer for `/person/*` approve/deny/list |
+| `PENDING_POLL_PREFIX` | `/pending` | Path prefix for the registration poll `GET` after `POST /register`. Use `/register/pending` for the unified portal; leave as `/pending` for standalone AS. |
+| `AUTO` | `0` | Set to `1` to skip confirmation pauses |
+| `SKIP_OPTIONAL` | `0` | Set to `1` to skip re-register, list, and revoke steps |
 
 **Requirements:** `curl`, `openssl`, `python3` on `PATH`; `jq` is optional (prettier JSON in the script output).
 
@@ -276,26 +345,34 @@ AUTO=1 SKIP_OPTIONAL=1 ./scripts/agent-server-walkthrough.sh
 
 ## 6. Testing with real HTTP signatures (Python)
 
-For end-to-end testing with **real** Ed25519 HTTP Message Signatures (`aauth.sign_request`), run the signed walkthrough script. It uses the `hwk` scheme for `POST /register` and `GET /pending/{id}`, then the `jkt-jwt` scheme for `POST /refresh` (see [§7](#7-token-renewal-refresh--jkt-jwt)). This matches how a production agent proves possession of keys.
+For end-to-end testing with **real** Ed25519 HTTP Message Signatures (`aauth.sign_request`), run the signed walkthrough script. It uses the `hwk` scheme for `POST /register` and the registration poll, then the `jkt-jwt` scheme for `POST /refresh` (see [§7](#7-token-renewal-refresh--jkt-jwt)). This matches how a production agent proves possession of keys.
 
 **Server requirements (unlike [§5](#5-testing-with-curl-insecure_dev-mode)):**
 
 - `AAUTH_AS_INSECURE_DEV=false` so signatures are verified.
 - A persistent server signing key, e.g. `AAUTH_AS_SIGNING_KEY_PATH=./keys/signing.pem` (see [§2](#2-start-the-server)).
-- `AAUTH_AS_PUBLIC_ORIGIN` and `AAUTH_AS_ISSUER` should match the URL you pass to the script (the script asserts the issued token’s `iss` equals the `issuer` field from `/.well-known/aauth-agent.json`).
+- For the portal: `AAUTH_PS_INSECURE_DEV=false`. The script asserts the issued token's `iss` equals the `issuer` in `/.well-known/aauth-agent.json`, which the portal sets to `AAUTH_PS_PUBLIC_ORIGIN`.
 
 From the repo root, with project dependencies installed (`uv pip install -e .` or equivalent):
 
 ```bash
-.venv/bin/python scripts/agent-server-signed-walkthrough.py
+# --- Against the unified portal (port 8765) ---
+AGENT_BASE=http://localhost:8765 PERSON_TOKEN=mytoken \
+  .venv/bin/python scripts/agent-server-signed-walkthrough.py \
+  --pending-prefix /register/pending
+
+# --- Against the standalone Agent Server (port 8800, default) ---
+AGENT_BASE=http://127.0.0.1:8800 PERSON_TOKEN=mytoken \
+  .venv/bin/python scripts/agent-server-signed-walkthrough.py
 ```
 
 **Environment variables** (optional; flags override):
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `AGENT_BASE` | `http://localhost:8800` | Agent server origin (same as `--base`) |
+| `AGENT_BASE` | `http://localhost:8800` | Server origin (same as `--base`) |
 | `PERSON_TOKEN` | `mytoken` | `AAUTH_AS_PERSON_TOKEN` for `/person/*` (same as `--person-token`) |
+| `PENDING_POLL_PREFIX` | `/pending` | Registration poll path prefix (same as `--pending-prefix`). Use `/register/pending` for the unified portal. |
 
 **CLI flags:**
 
@@ -304,20 +381,21 @@ From the repo root, with project dependencies installed (`uv pip install -e .` o
 | `--base URL` | Server origin |
 | `--person-token TOKEN` | Bearer for approve |
 | `--skip-refresh` | Stop after the first `agent_token` (no `POST /refresh`) |
+| `--pending-prefix PATH` | Override poll path prefix (default `/pending`; use `/register/pending` for portal) |
 
 **What the script does**
 
 1. Generates stable + ephemeral Ed25519 key pairs; prints the stable JKT (`urn:jkt:sha-256:…`).
 2. `GET /.well-known/aauth-agent.json` — must return **200**; reads `issuer`.
-3. `POST /register` with JSON body + `hwk` HTTP signature — expects **202**, `Location: /pending/…`, body `{"status":"pending",…}`.
-4. `GET /pending/{id}` before approval — expects **202** and `{"status":"pending"}`.
+3. `POST /register` with JSON body + `hwk` HTTP signature — expects **202**, `Location` header, body `{"status":"pending",…}`.
+4. `GET <pending-prefix>/{id}` before approval — expects **202** and `{"status":"pending"}`.
 5. `POST /person/registrations/{id}/approve` with `Authorization: Bearer …` — expects **200** and `agent_id`.
-6. `GET /pending/{id}` after approval — expects **200** and `agent_token`; decodes JWT (signature of agent token **not** verified here) and checks `iss`, `sub`, `dwk`, and that `cnf.jwk.x` matches the ephemeral key used at registration.
+6. `GET <pending-prefix>/{id}` after approval — expects **200** and `agent_token`; decodes JWT and checks `iss`, `sub`, `dwk`, and that `cnf.jwk.x` matches the ephemeral key used at registration.
 7. Unless `--skip-refresh`: builds `jkt-s256+jwt`, calls `POST /refresh` with `jkt-jwt` + new ephemeral signer — expects **200**; checks new token has same `sub` and new `cnf.jwk.x`.
 
 The script uses **stdlib `urllib` only** (no `requests`). It exits with status **0** on success and **1** if any assertion or HTTP status fails.
 
-**Example output** (IDs, times, and JWT strings differ each run; long tokens are truncated in the log line only):
+**Example output** against the portal (IDs, times, and JWT strings differ each run):
 
 ```
 Generating Ed25519 key pairs (stable + ephemeral)…
@@ -325,20 +403,21 @@ Stable JKT: urn:jkt:sha-256:QNHUodPC7m3FNtiY6g-1iZJky6Cym5eq8UAnf1Ewzew
 
 --- GET /.well-known/aauth-agent.json ---
 {
-  "issuer": "http://127.0.0.1:8811",
-  "jwks_uri": "http://127.0.0.1:8811/.well-known/jwks.json",
+  "issuer": "http://localhost:8765",
+  "jwks_uri": "http://localhost:8765/.well-known/jwks.json",
+  "client_name": "AAuth Person Portal",
   ...
 }
 
 --- POST /register ---
-HTTP 202  Location: /pending/i1YYnzNgbcpu1x__CdcXNg
+HTTP 202  Location: /register/pending/i1YYnzNgbcpu1x__CdcXNg
 {
   "status": "pending",
   "expires_at": "2026-04-23T16:41:27.530717+00:00"
 }
 Pending ID: i1YYnzNgbcpu1x__CdcXNg
 
---- GET /pending/{id} (before approval) ---
+--- GET /register/pending/{id} (before approval) ---
 HTTP 202  {"status":"pending"}
 
 --- POST /person/registrations/{id}/approve ---
@@ -347,11 +426,11 @@ HTTP 202  {"status":"pending"}
   "label": "Signed walkthrough client"
 }
 
---- GET /pending/{id} (after approval) ---
+--- GET /register/pending/{id} (after approval) ---
 HTTP 200  agent_token: eyJhbGciOiJFZERTQSIsImtpZCI6ImFzLTIwMjYwNC00Mjc4Mz…
 Token claims (decoded, signature not verified):
 {
-  "iss": "http://127.0.0.1:8811",
+  "iss": "http://localhost:8765",
   "sub": "aauth:efb305c4-f032-4895-82f8-579493831e17@localhost",
   "dwk": "aauth-agent.json",
   "jti": "f24843e6-4294-4497-9acd-8664604ee99d",
@@ -377,11 +456,6 @@ New token cnf.jwk.x matches new ephemeral key.
 === Refresh (jkt-jwt) complete ===
 ```
 
-Point the client at your server, for example:
-
-```bash
-AGENT_BASE=http://127.0.0.1:8800 PERSON_TOKEN=mytoken .venv/bin/python scripts/agent-server-signed-walkthrough.py
-```
 
 ---
 
@@ -440,7 +514,7 @@ When a second laptop needs to enroll under the same person identity, the person 
 4. Confirm: "This will add this device to [label]. The device will share the same agent identity."
 5. Click **Link device**
 
-Device 2 now polls `GET /pending/{id}` and receives an agent token with the same `sub` as Device 1.
+Device 2 now polls `GET /pending/{id}` (standalone AS) or `GET /register/pending/{id}` (unified portal) and receives an agent token with the same `sub` as Device 1.
 
 ### Via the API
 
@@ -580,7 +654,8 @@ When an agent presents its token to a resource, the resource should verify:
 | `GET` | `/.well-known/aauth-agent.json` | None | Server metadata |
 | `GET` | `/.well-known/jwks.json` | None | Server's signing public keys |
 | `POST` | `/register` | HTTP Sig (`hwk`) | Self-register. Body: `{stable_pub, label?}`. Returns `202` with `Location` or `200` with `agent_token` (re-registration). |
-| `GET` | `/pending/{id}` | HTTP Sig (`hwk`, same eph key) | Poll for approval. `202` pending, `200` approved (includes `agent_token`), `403` denied, `410` expired. |
+| `GET` | `/pending/{id}` | HTTP Sig (`hwk`, same eph key) | Poll for approval. `202` pending, `200` approved (includes `agent_token`), `403` denied, `410` expired. **Standalone AS only.** |
+| `GET` | `/register/pending/{id}` | HTTP Sig (`hwk`, same eph key) | Same as above — **unified portal only**. The portal mounts the registration poll at this path to avoid conflict with the Person Server's `/pending/{id}` token-broker endpoint. |
 | `POST` | `/refresh` | HTTP Sig (`jkt-jwt`) | Renew token. Empty body. Returns `200` with `agent_token`. |
 
 ### Person-facing endpoints
@@ -624,19 +699,20 @@ Signature-Key: sig=hwk;kty="OKP";crv="Ed25519";x="<base64url pub key>"
 
 ## 12. Troubleshooting
 
-### `401 Unauthorized` on `/register` or `/pending/{id}`
+### `401 Unauthorized` on `/register` or `/pending/{id}` (or `/register/pending/{id}`)
 
 - **insecure_dev=true**: Check that `Signature-Input`, `Signature`, and `Signature-Key` headers are present. The key `x` value must be a valid base64url string (44 characters for Ed25519).
 - **insecure_dev=false**: Verify the `created` timestamp in `Signature-Input` is within 60 seconds of server time. Ensure the HTTP signature covers `@method`, `@authority`, `@path`, and `signature-key`.
-- For `GET /pending/{id}`: the `Signature-Key` must use the **same** ephemeral key that was used at registration. Using a different ephemeral key returns 401.
+- For the registration poll: the `Signature-Key` must use the **same** ephemeral key that was used at registration. Using a different ephemeral key returns 401.
+- **Portal path confusion:** if running the walkthrough scripts against the unified portal without `PENDING_POLL_PREFIX=/register/pending` (bash) or `--pending-prefix /register/pending` (Python), the script will poll `/pending/{id}` which hits the Person Server token-broker and return 404. Set the correct prefix.
 
-### `410 Gone` on `GET /pending/{id}`
+### `410 Gone` on `GET /pending/{id}` (or `/register/pending/{id}`)
 
 The pending registration expired (default TTL is 1 hour). Re-register with `POST /register`.
 
-### `404` on `GET /pending/{id}`
+### `404` on `GET /pending/{id}` (or `/register/pending/{id}`)
 
-The pending ID is unknown. Either the server restarted (in-memory state is lost), or the ID is wrong.
+The pending ID is unknown. Either the server restarted (in-memory state is lost), the ID is wrong, or you are polling the wrong path — use `/register/pending/{id}` for the unified portal and `/pending/{id}` for standalone AS.
 
 ### `401` on `POST /refresh`
 

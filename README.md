@@ -2,6 +2,35 @@
 
 Python interfaces and a **FastAPI** server implementing Person Server–style endpoints from **SPEC.md** (missions, token, permission, audit, interaction, consent).
 
+## Unified Person Portal (Person Server + Agent Server, one process)
+
+Run **both** the Person Server API and the Agent Server API on a **single origin** with one dashboard (`portal/`). Use this when you want missions, token flows, consent, **and** agent registration/bindings without starting two servers.
+
+### Quick start
+
+```bash
+cd /path/to/aauth-person-server
+source .venv/bin/activate   # or: uv venv .venv && uv pip install -e ".[dev]"
+
+export AAUTH_PS_PUBLIC_ORIGIN=http://localhost:8765
+export AAUTH_AS_PUBLIC_ORIGIN=http://localhost:8765
+export AAUTH_PS_ADMIN_TOKEN=mytoken
+export AAUTH_PS_INSECURE_DEV=true
+export AAUTH_AS_PERSON_TOKEN=mytoken
+# Disable AS HTTP-sig verification (required for curl/shell walkthrough scripts):
+export AAUTH_AS_INSECURE_DEV=true
+
+uvicorn portal.http.app:app --reload --host 0.0.0.0 --port 8765
+```
+
+- **Portal UI:** open [http://localhost:8765/ui/index.html](http://localhost:8765/ui/index.html) and sign in with `mytoken` (value of `AAUTH_PS_ADMIN_TOKEN` / `AAUTH_AS_PERSON_TOKEN`).
+- **Well-known:** `/.well-known/aauth-person.json`, `/.well-known/aauth-agent.json`, and `/.well-known/jwks.json` (real Agent Server signing keys) are all served on the same origin.
+- **Agent registration poll path:** in the portal, pending registration polling uses **`GET /register/pending/{id}`** instead of `GET /pending/{id}` (which is reserved for the Person Server token-broker). When running the agent walkthrough scripts against the portal, set `PENDING_POLL_PREFIX=/register/pending` (bash) or `--pending-prefix /register/pending` (Python). Standalone Agent Server still uses `/pending/{id}` unchanged.
+- **`ps-demo.sh`** and **`hwk-ps-client.sh`** work against the portal without any changes — PS routes are at the same paths. Just point them at port 8765.
+- **`agent-server-walkthrough.sh`** and **`agent-server-signed-walkthrough.py`** work against the portal with the `PENDING_POLL_PREFIX`/`--pending-prefix` flag set as above.
+
+The sections below describe the **standalone Person Server** (`ps.http.app`) and related tooling; behavior and env vars are the same unless noted above.
+
 ## Run the API
 
 ### With uv (recommended)
@@ -11,25 +40,32 @@ cd /path/to/aauth-person-server
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev]"
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-export AAUTH_PS_ADMIN_TOKEN=admin
+export AAUTH_PS_ADMIN_TOKEN=mytoken
 export AAUTH_PS_INSECURE_DEV=true
-uvicorn ps.http.app:app --reload --host 0.0.0.0 --port 8765
+# Use a different port if the unified portal is already on 8765:
+uvicorn ps.http.app:app --reload --host 0.0.0.0 --port 8766
 pytest
 ```
 
 ### Curl walkthrough (manual server)
 
-With the server running on port 8765:
+Works against both the **unified portal** (`portal.http.app`, port 8765) and the **standalone Person Server** (`ps.http.app`). PS routes are identical in both.
 
 **Person Server metadata** (includes `permission_endpoint`, `audit_endpoint`, `token_endpoint`, `mission_endpoint`, and the other URLs from **SPEC**). Use the same host and port as **`AAUTH_PS_PUBLIC_ORIGIN`** so the JSON matches how you call the API.
 
 ```bash
+# Unified portal (recommended):
 curl -sS http://127.0.0.1:8765/.well-known/aauth-person.json | jq
+# Standalone PS (if running separately):
+curl -sS http://127.0.0.1:8766/.well-known/aauth-person.json | jq
 ```
 
 ```bash
+# Against unified portal (port 8765):
 ./scripts/ps-demo.sh
-# or: BASE_URL=http://127.0.0.1:8080 AGENT_ID=my-agent ./scripts/ps-demo.sh
+
+# Against standalone PS on a different port:
+BASE_URL=http://127.0.0.1:8766 ./scripts/ps-demo.sh
 ```
 
 The script prints each HTTP request then the full `curl -i` response. It covers:
@@ -47,10 +83,17 @@ Install **`jq`** for prettier JSON in the script output (`brew install jq`).
 
 `./scripts/ps-demo.sh` uses **`X-AAuth-Agent-Id`** (dev stub). For **real HWK** signing (`AAUTH_PS_INSECURE_DEV=false`), use **`scripts/hwk-ps-client.sh`** — this is the only entry point; it locates the project venv and delegates to an internal Python implementation. It calls **`aauth.sign_request(..., sig_scheme="hwk")`**, persists an **Ed25519** key as PEM, and by default does **`POST /mission`** (built-in demo description) then **`POST /token`** with JSON **`mission`** (and can sign **`POST /permission`**, **`POST /audit`**, **`POST /interaction`** for completion). Use **`--no-mission`** to skip mission creation and request a token with only **`resource_token`**.
 
-```bash
-AAUTH_PS_INSECURE_DEV=false uvicorn ps.http.app:app --host 127.0.0.1 --port 8765
+Works against both the **unified portal** and the **standalone PS** — PS routes are at the same paths in both.
 
+```bash
+# Against the unified portal (portal must be started with AAUTH_PS_INSECURE_DEV=false):
+AAUTH_PS_INSECURE_DEV=false AAUTH_AS_INSECURE_DEV=false \
+uvicorn portal.http.app:app --host 127.0.0.1 --port 8765
 ./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8765
+
+# Against standalone PS only:
+AAUTH_PS_INSECURE_DEV=false uvicorn ps.http.app:app --host 127.0.0.1 --port 8766
+./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8766
 
 # Custom mission, permission check, and audit (still one flow):
 ./scripts/hwk-ps-client.sh --base-url http://127.0.0.1:8765 \

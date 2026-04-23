@@ -8,19 +8,24 @@
 # Usage:
 #   ./scripts/agent-server-walkthrough.sh
 #   BASE=http://127.0.0.1:8800 PERSON_TOKEN=mytoken ./scripts/agent-server-walkthrough.sh
+#   BASE=http://127.0.0.1:8765 PENDING_POLL_PREFIX=/register/pending ./scripts/agent-server-walkthrough.sh  # unified portal
 #   AUTO=1 ./scripts/agent-server-walkthrough.sh    # run all steps without "Press Enter"
 #
 # Environment:
-#   BASE          — server origin (default: http://localhost:8800)
-#   PERSON_TOKEN  — AAUTH_AS_PERSON_TOKEN value (default: mytoken)
-#   AUTO          — if set to 1, skip pauses between steps
-#   SKIP_OPTIONAL — if set to 1, skip re-register, list/deny/revoke extras
+#   BASE                 — server origin (default: http://localhost:8800)
+#   PERSON_TOKEN         — AAUTH_AS_PERSON_TOKEN value (default: mytoken)
+#   PENDING_POLL_PREFIX — path prefix for registration poll GET after POST /register (default: /pending).
+#                         Use /register/pending when targeting the unified portal (portal.http.app);
+#                         standalone agent_server keeps /pending/{id}.
+#   AUTO                 — if set to 1, skip pauses between steps
+#   SKIP_OPTIONAL        — if set to 1, skip re-register, list/deny/revoke extras
 
 set -euo pipefail
 
 BASE="${BASE:-http://localhost:8800}"
 BASE="${BASE%/}"
 PERSON_TOKEN="${PERSON_TOKEN:-mytoken}"
+PENDING_POLL_PREFIX="${PENDING_POLL_PREFIX:-/pending}"
 AUTO="${AUTO:-0}"
 SKIP_OPTIONAL="${SKIP_OPTIONAL:-0}"
 
@@ -111,6 +116,7 @@ main() {
   say "AGENTSERVER.md §5 — curl walkthrough (insecure_dev)"
   sub "Target: ${BASE}"
   sub "Person token: ${PERSON_TOKEN}"
+  sub "PENDING_POLL_PREFIX=${PENDING_POLL_PREFIX}"
   sub "AUTO=${AUTO} SKIP_OPTIONAL=${SKIP_OPTIONAL}"
 
   step_check_server
@@ -138,7 +144,7 @@ main() {
   SIG="sig=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:"
   SIG_KEY="sig=hwk;kty=\"OKP\";crv=\"Ed25519\";x=\"${EPH_X}\""
 
-  say "Step 2 — POST /register (expect 202 + Location: /pending/…)"
+  say "Step 2 — POST /register (expect 202 + Location: ${PENDING_POLL_PREFIX}/…)"
   local reg_hdr reg_body reg_code
   reg_hdr=$(mktemp)
   reg_body=$(mktemp)
@@ -167,6 +173,7 @@ main() {
 
   local PENDING_ID
   PENDING_ID=$(printf '%s' "$loc" | sed -E 's#.*/pending/##')
+  # Works for both /pending/{id} and /register/pending/{id} (greedy .* then /pending/)
   if [[ -z "$PENDING_ID" ]]; then
     bad "could not parse pending id from Location"
     exit 1
@@ -187,20 +194,20 @@ main() {
   rm -f "$reg_hdr" "$reg_body"
   pause
 
-  say "Step 3 — GET /pending/{id} before approval (expect 202 + {\"status\":\"pending\"})"
+  say "Step 3 — GET ${PENDING_POLL_PREFIX}/{id} before approval (expect 202 + {\"status\":\"pending\"})"
   local p_hdr p_body p_code
   p_hdr=$(mktemp)
   p_body=$(mktemp)
-  curl -sS -D "$p_hdr" -o "$p_body" "${BASE}/pending/${PENDING_ID}" \
+  curl -sS -D "$p_hdr" -o "$p_body" "${BASE}${PENDING_POLL_PREFIX}/${PENDING_ID}" \
     -H "Signature-Input: ${SIG_INPUT}" \
     -H "Signature: ${SIG}" \
     -H "Signature-Key: ${SIG_KEY}"
   p_code=$(http_code_from_headers "$p_hdr")
   if [[ "$p_code" != "202" ]]; then
-    bad "GET /pending (before) → HTTP ${p_code} (expected 202)"
+    bad "GET poll (before) → HTTP ${p_code} (expected 202)"
     exit 1
   fi
-  ok "GET /pending → HTTP 202"
+  ok "GET poll → HTTP 202"
   if have_jq; then
     sub "$(jq . <"$p_body" | sed 's/^/    /')"
     if [[ $(jq -r .status <"$p_body") == "pending" ]]; then
@@ -242,20 +249,20 @@ main() {
   ok "agent_id: ${AGENT_ID}"
   pause
 
-  say "Step 5 — GET /pending/{id} after approval (expect 200 + agent_token)"
+  say "Step 5 — GET ${PENDING_POLL_PREFIX}/{id} after approval (expect 200 + agent_token)"
   local f_hdr f_body f_code
   f_hdr=$(mktemp)
   f_body=$(mktemp)
-  curl -sS -D "$f_hdr" -o "$f_body" "${BASE}/pending/${PENDING_ID}" \
+  curl -sS -D "$f_hdr" -o "$f_body" "${BASE}${PENDING_POLL_PREFIX}/${PENDING_ID}" \
     -H "Signature-Input: ${SIG_INPUT}" \
     -H "Signature: ${SIG}" \
     -H "Signature-Key: ${SIG_KEY}"
   f_code=$(http_code_from_headers "$f_hdr")
   if [[ "$f_code" != "200" ]]; then
-    bad "GET /pending (after) → HTTP ${f_code} (expected 200)"
+    bad "GET poll (after) → HTTP ${f_code} (expected 200)"
     exit 1
   fi
-  ok "GET /pending → HTTP 200"
+  ok "GET poll → HTTP 200"
   local AGENT_TOKEN
   AGENT_TOKEN=$(python3 -c "import json,sys; print(json.load(open('${f_body}')).get('agent_token',''))")
   if [[ -z "$AGENT_TOKEN" || "$AGENT_TOKEN" == "None" ]]; then

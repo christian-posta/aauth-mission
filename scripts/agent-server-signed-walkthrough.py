@@ -8,8 +8,10 @@ Uses stdlib urllib only (no requests). Run from repo root with project venv:
   .venv/bin/python scripts/agent-server-signed-walkthrough.py
 
 Environment:
-  AGENT_BASE     — server origin (default: http://localhost:8800)
-  PERSON_TOKEN  — bearer for /person/* (default: mytoken)
+  AGENT_BASE            — server origin (default: http://localhost:8800)
+  PERSON_TOKEN          — bearer for /person/* (default: mytoken)
+  PENDING_POLL_PREFIX   — registration poll path prefix (default: /pending). Use /register/pending
+                          for the unified portal (portal.http.app); standalone agent_server uses /pending.
 """
 from __future__ import annotations
 
@@ -118,9 +120,17 @@ def main() -> int:
         action="store_true",
         help="Stop after registration + first agent token (no POST /refresh)",
     )
+    parser.add_argument(
+        "--pending-prefix",
+        default=os.environ.get("PENDING_POLL_PREFIX", "/pending"),
+        help="Poll path after POST /register (default /pending; use /register/pending for portal)",
+    )
     args = parser.parse_args()
     base = args.base.rstrip("/")
     person_token = args.person_token
+    pending_prefix = args.pending_prefix.rstrip("/")
+    if not pending_prefix.startswith("/"):
+        pending_prefix = "/" + pending_prefix
 
     print("Generating Ed25519 key pairs (stable + ephemeral)…")
     stable_priv, stable_pub = aauth.generate_ed25519_keypair()
@@ -165,8 +175,8 @@ def main() -> int:
     pending_id = loc.rstrip("/").split("/")[-1]
     print(f"Pending ID: {pending_id}")
 
-    _print_section("GET /pending/{id} (before approval)")
-    pend_url = f"{base}/pending/{pending_id}"
+    _print_section(f"GET {pending_prefix}/{{id}} (before approval)")
+    pend_url = f"{base}{pending_prefix}/{pending_id}"
     hdrs = _merge_sign_headers("GET", pend_url, None, eph_priv)
     code, _rh, raw = http_do("GET", pend_url, hdrs, None)
     print(f"HTTP {code}  {raw.decode()}")
@@ -189,7 +199,7 @@ def main() -> int:
     print(json.dumps(appr, indent=2))
     agent_id = appr["agent_id"]
 
-    _print_section("GET /pending/{id} (after approval)")
+    _print_section(f"GET {pending_prefix}/{{id}} (after approval)")
     hdrs = _merge_sign_headers("GET", pend_url, None, eph_priv)
     code, _rh, raw = http_do("GET", pend_url, hdrs, None)
     if code != 200:
