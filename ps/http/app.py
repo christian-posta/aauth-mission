@@ -30,7 +30,9 @@ from ps.api.user_mission_routes import (
     user_consent_queue,
 )
 from ps.api.user_routes import get_interaction_route, post_decision_route
+from ps.api.trust_routes import TrustedAgentIn, handle_add_trusted, handle_list_trusted, handle_remove_trusted
 from ps.exceptions import (
+    AgentTokenRejectError,
     ClarificationLimitError,
     ForbiddenOwnerError,
     InvalidInteractionCodeError,
@@ -39,10 +41,19 @@ from ps.exceptions import (
     PendingDeniedError,
     PendingExpiredError,
     PendingGoneError,
+    ResourceTokenRejectError,
     SlowDownError,
 )
 from ps.http.config import PSHttpSettings
-from ps.http.deps import get_settings, parse_prefer_wait, require_admin, require_agent_id, require_user
+from ps.http.deps import (
+    TokenAgentContext,
+    get_settings,
+    parse_prefer_wait,
+    require_admin,
+    require_agent_id,
+    require_token_agent,
+    require_user,
+)
 from ps.http.encoding import (
     auth_token_http_dict,
     build_aauth_requirement_header,
@@ -206,14 +217,20 @@ def _mission_outcome_response(out: Mission | DeferredResponse) -> Response | JSO
     return _json_deferred(out)
 
 
-def create_app(settings: PSHttpSettings | None = None) -> FastAPI:
+def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContainer | None = None) -> FastAPI:
     settings = settings or PSHttpSettings()
-    ps: PSContainer = build_memory_ps(
+    ps: PSContainer = ps_container or build_memory_ps(
         public_origin=settings.public_origin,
         auto_approve_token=settings.auto_approve_token,
         auto_approve_mission=settings.auto_approve_mission,
         agent_jwt_stub=settings.agent_jwt_stub,
         pending_ttl_seconds=settings.pending_ttl_seconds,
+        signing_key_path=settings.signing_key_path,
+        trust_file=settings.trust_file,
+        auth_token_lifetime=settings.auth_token_lifetime,
+        user_id=settings.user_id,
+        insecure_dev=settings.insecure_dev,
+        self_jwks_provider=None,
     )
 
     app = FastAPI(
@@ -283,6 +300,18 @@ def create_app(settings: PSHttpSettings | None = None) -> FastAPI:
     async def forbidden_owner_handler(_request: Request, _exc: ForbiddenOwnerError) -> JSONResponse:
         return aauth_json_error(403, aauth_errors.ERROR_DENIED, "not owner of this mission")
 
+    @app.exception_handler(ResourceTokenRejectError)
+    async def resource_token_reject_handler(
+        _request: Request, exc: ResourceTokenRejectError
+    ) -> JSONResponse:
+        return aauth_json_error(401, exc.error, exc.message)
+
+    @app.exception_handler(AgentTokenRejectError)
+    async def agent_token_reject_handler(
+        _request: Request, exc: AgentTokenRejectError
+    ) -> JSONResponse:
+        return aauth_json_error(401, exc.error, exc.message)
+
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         if _is_agent_protocol_path(request.url.path):
@@ -321,8 +350,8 @@ def create_app(settings: PSHttpSettings | None = None) -> FastAPI:
         return _well_known_payload()
 
     @app.get("/.well-known/jwks.json")
-    def jwks_placeholder():
-        return {"keys": []}
+    def jwks():
+        return ps.ps_signing.get_jwks()
 
     @app.post("/mission")
     async def post_mission(
@@ -349,7 +378,7 @@ def create_app(settings: PSHttpSettings | None = None) -> FastAPI:
     async def post_token(
         body: TokenRequestBody,
         request: Request,
-        agent_id: Annotated[str, Depends(require_agent_id)],
+        tok_agent: Annotated[TokenAgentContext, Depends(require_token_agent)],
     ):
         prefer = parse_prefer_wait(request.headers.get("prefer"))
         if prefer is not None:
@@ -362,7 +391,7 @@ def create_app(settings: PSHttpSettings | None = None) -> FastAPI:
         if mref is None and hdr_m is not None:
             mref = hdr_m
         req = TokenRequest(
-            agent_id=agent_id,
+            agent_id=tok_agent.agent_id,
             resource_token=body.resource_token,
             justification=just,
             upstream_token=body.upstream_token,
@@ -370,6 +399,9 @@ def create_app(settings: PSHttpSettings | None = None) -> FastAPI:
             tenant=body.tenant,
             domain_hint=body.domain_hint,
             mission=mref,
+            agent_cnf_jwk=tok_agent.agent_cnf_jwk,
+            agent_jkt=tok_agent.agent_jkt,
+            secure_mode=tok_agent.secure_mode,
         )
         out = request_token_route(ps.token_broker, req)
         return _token_outcome_response(out)
@@ -597,6 +629,38 @@ def create_app(settings: PSHttpSettings | None = None) -> FastAPI:
     @app.get("/admin/pending")
     def admin_list_pending(_admin: Annotated[None, Depends(require_admin)]) -> list[dict[str, Any]]:
         return ps.pending_store.list_open_pending_for_admin()
+
+    @app.get("/person/trusted-agent-servers")
+    def list_trusted_agent_servers(
+        _admin: Annotated[None, Depends(require_admin)],
+    ) -> list[dict[str, Any]]:
+        return handle_list_trusted(ps.trust_registry, ps_origin=settings.public_origin.rstrip("/"))
+
+    @app.post("/person/trusted-agent-servers", status_code=201)
+    def add_trusted_agent_server(
+        body: TrustedAgentIn,
+        _admin: Annotated[None, Depends(require_admin)],
+    ) -> dict[str, Any]:
+        try:
+            entry = handle_add_trusted(ps.trust_registry, body)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {
+            "issuer": entry.issuer,
+            "display_name": entry.display_name,
+            "jwks_uri": entry.jwks_uri,
+            "jwks_fingerprint": entry.jwks_fingerprint,
+            "added_at": entry.added_at,
+        }
+
+    @app.delete("/person/trusted-agent-servers", status_code=204)
+    def remove_trusted_agent_server(
+        issuer: str,
+        _admin: Annotated[None, Depends(require_admin)],
+    ) -> Response:
+        if not handle_remove_trusted(ps.trust_registry, issuer):
+            raise HTTPException(status_code=404, detail="issuer not in trust registry")
+        return Response(status_code=204)
 
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():

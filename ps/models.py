@@ -102,6 +102,11 @@ class TokenRequest:
     tenant: str | None = None
     domain_hint: str | None = None
     mission: MissionRef | None = None
+    #: Populated for secure ``POST /token`` (scheme=jwt); required to issue ``aa-auth+jwt``.
+    agent_cnf_jwk: dict[str, Any] | None = None
+    agent_jkt: str | None = None
+    #: When False, skip resource-token verification (``AAUTH_PS_INSECURE_DEV`` demo path).
+    secure_mode: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +150,12 @@ class ConsentContext:
     question: str | None = None
     # "token" | "mission" | "interaction" — which deferred flow this consent is for
     pending_kind: str | None = None
+    #: Resource issuer URL from verified ``aa-resource+jwt`` (mode 3).
+    resource_iss: str | None = None
+    #: Space-separated scopes from the resource token.
+    resource_scope: str | None = None
+    #: Mission hash from the resource token when present.
+    resource_mission_s256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

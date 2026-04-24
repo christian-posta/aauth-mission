@@ -139,6 +139,25 @@ A runnable reference implementation (Python, **`aauth`**) that exercises the sam
 
 ---
 
+## 8. Person Server as authorization server (mode 3)
+
+When the Person Server runs with **`AAUTH_PS_INSECURE_DEV=false`**, **`POST /token`** is a real **§PS Token Endpoint** for **three-party, PS-managed access**:
+
+1. **HTTP message signature** — The request is signed per RFC 9421. **`Signature-Key`** must use **`scheme=jwt`** and embed the raw **`aa-agent+jwt`** string (see `aauth.sign_request(..., sig_scheme="jwt", jwt=<agent_jwt>, private_key=<ephemeral key matching cnf.jwk>)`).
+
+2. **`resource_token` body field** — Must be a verifiable **`aa-resource+jwt`** (`typ`, `dwk=aauth-resource.json`, signed by `{iss}/.well-known/aauth-resource.json` → JWKS). Typical checks (enforced by `aauth.verify_resource_token` in `ps/impl/memory_token.py`) include:
+   - **`aud`** — For PS-issued **`aa-auth+jwt`**, this must be the Person Server issuer (`AAUTH_PS_PUBLIC_ORIGIN`). If **`aud`** names another party, the reference PS keeps the legacy **fake federator** path (`aa-auth.fake.*`).
+   - **`agent`** / **`agent_jkt`** — Must match the **`sub`** and ephemeral key thumbprint from the verified agent token.
+   - **`exp`** — Must be valid; expired tokens yield **`expired_resource_token`**.
+
+3. **Response** — On success, **`auth_token`** is a real **`aa-auth+jwt`** signed by the PS Ed25519 key (JWKS at **`/.well-known/jwks.json`**; merged with Agent Server keys on the unified portal). Claims include **`iss`** (PS), **`aud`** (resource issuer from the resource token), **`agent`**, **`act.sub`**, **`cnf.jwk`**, **`sub`** (demo: **`AAUTH_PS_USER_ID`**), **`scope`**, **`dwk=aauth-person.json`**.
+
+4. **Trust** — The agent token **`iss`** must be trusted per **`TRUST.md`** (self-origin or **Trusted Agent Servers** registry).
+
+5. **Consent (demo)** — After resource and agent verification, the PS issues the auth token immediately unless the resource token’s **`scope`** is a space-separated list that includes **`require:user`**. If that scope is present, the request follows the normal pending / consent UI flow unless **`AAUTH_PS_AUTO_APPROVE_TOKEN=true`** (which still skips all consent).
+
+Runnable demo: **`scripts/ps-token-mode3.py`** (starts a minimal resource metadata server and calls a running portal).
+
 ## Out of scope here
 
 - Exact **`Signature-Input`** component ordering (handled by **`aauth`** and RFC 9421).

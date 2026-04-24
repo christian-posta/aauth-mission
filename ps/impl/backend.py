@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from ps.models import (
     AuthTokenResponse,
@@ -54,6 +54,10 @@ class PendingRecord:
     clarification_round: int = 0
     callback_url: str | None = None
     last_poll_monotonic: float | None = None
+    #: Verified resource token claims (secure token requests only).
+    verified_resource_claims: dict[str, Any] | None = None
+    #: Ephemeral public JWK bound in the agent token (secure ``POST /token``).
+    token_agent_cnf_jwk: dict[str, Any] | None = None
 
 
 @dataclass

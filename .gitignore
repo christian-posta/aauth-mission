@@ -13,3 +13,6 @@ htmlcov/
 
 # HWK sample client key (scripts/hwk_mm_client.py)
 scripts/.hwk-mm-client-key.pem
+
+# Generated PS / portal signing keys and trust store (AAUTH_PS_* defaults)
+.aauth/

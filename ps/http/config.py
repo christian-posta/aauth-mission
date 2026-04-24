@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ps.models import PSMetadata
@@ -41,7 +41,9 @@ class PSHttpSettings(BaseSettings):
     )
     auto_approve_token: bool = Field(
         default=False,
-        description="If true, skip consent and return a fake auth token immediately on POST /token.",
+        description="If true, skip consent on POST /token. If false (secure mode), consent is required only when "
+        "the verified resource token scope includes the require:user scope (space-separated); otherwise the auth "
+        "token is issued immediately.",
     )
     auto_approve_mission: bool = Field(
         default=True,
@@ -60,6 +62,34 @@ class PSHttpSettings(BaseSettings):
         ge=1,
         description="TTL for open pending rows before expired/abandoned (protocol pending URL security).",
     )
+    signing_key_path: str | None = Field(
+        default=".aauth/ps-signing-key.pem",
+        description="PS Ed25519 signing key PEM. Generated on first boot if missing. Empty string = ephemeral in-memory key.",
+    )
+    trust_file: str | None = Field(
+        default=".aauth/ps-trusted-agents.json",
+        description="JSON file for trusted agent-server registry (UI-managed). Empty string disables persistence.",
+    )
+    auth_token_lifetime: int = Field(
+        default=3600,
+        ge=60,
+        le=3600,
+        description="Lifetime in seconds for PS-issued aa-auth+jwt (SPEC max 1 hour).",
+    )
+
+    @field_validator("signing_key_path", mode="before")
+    @classmethod
+    def _signing_path_empty_ephemeral(cls, v: object) -> object:
+        if v == "":
+            return None
+        return v
+
+    @field_validator("trust_file", mode="before")
+    @classmethod
+    def _trust_file_empty(cls, v: object) -> object:
+        if v == "":
+            return None
+        return v
 
     @model_validator(mode="after")
     def warn_https_when_not_insecure_dev(self) -> PSHttpSettings:

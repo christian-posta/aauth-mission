@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from ps.exceptions import NotFoundError
 from ps.federation.as_federator import ASFederator
+from ps.federation.agent_server_trust import normalize_issuer
 from ps.impl.backend import PSBackend, utc_now
 from ps.impl.memory_pending import MemoryPendingStore
 from ps.impl.mission_utils import mission_from_proposal
@@ -23,6 +24,7 @@ from ps.models import (
     RequirementLevel,
     UserDecision,
 )
+from ps.service.auth_issuer import AuthTokenIssuer
 from ps.service.user_consent import UserConsent
 
 
@@ -32,6 +34,7 @@ class MemoryUserConsent(UserConsent):
         backend: PSBackend,
         store: MemoryPendingStore,
         federator: ASFederator,
+        auth_issuer: AuthTokenIssuer,
         *,
         agent_jwt_stub: str,
         ps_issuer: str,
@@ -39,6 +42,7 @@ class MemoryUserConsent(UserConsent):
         self._b = backend
         self._store = store
         self._federator = federator
+        self._auth_issuer = auth_issuer
         self._agent_jwt_stub = agent_jwt_stub
         self._ps_issuer = ps_issuer.rstrip("/")
 
@@ -64,6 +68,13 @@ class MemoryUserConsent(UserConsent):
         elif rec.kind == "token" and rec.token_request and rec.token_request.mission:
             mission = self._b.missions.get(rec.token_request.mission.s256)
         responses = tuple(rec.clarification_responses) if rec.clarification_responses else ()
+        vclaims = rec.verified_resource_claims or {}
+        resource_iss = str(vclaims["iss"]) if vclaims.get("iss") else None
+        resource_scope = str(vclaims["scope"]) if vclaims.get("scope") else None
+        rm = vclaims.get("mission")
+        resource_mission_s256 = None
+        if isinstance(rm, dict) and rm.get("s256"):
+            resource_mission_s256 = str(rm["s256"])
         if rec.kind == "interaction":
             return ConsentContext(
                 pending_id=rec.pending_id,
@@ -77,6 +88,9 @@ class MemoryUserConsent(UserConsent):
                 summary=rec.interaction_summary,
                 question=rec.interaction_question,
                 pending_kind=rec.kind,
+                resource_iss=resource_iss,
+                resource_scope=resource_scope,
+                resource_mission_s256=resource_mission_s256,
             )
         return ConsentContext(
             pending_id=rec.pending_id,
@@ -87,6 +101,9 @@ class MemoryUserConsent(UserConsent):
             agent_name=None,
             clarification_responses=responses,
             pending_kind=rec.kind,
+            resource_iss=resource_iss,
+            resource_scope=resource_scope,
+            resource_mission_s256=resource_mission_s256,
         )
 
     def record_decision(self, pending_id: str, decision: UserDecision) -> DecisionResult:
@@ -132,11 +149,31 @@ class MemoryUserConsent(UserConsent):
             return DecisionResult(redirect_url=rec.callback_url)
 
         if rec.kind == "token" and rec.token_request is not None:
-            auth = self._federator.request_auth_token(
-                rec.token_request.resource_token,
-                self._agent_jwt_stub,
-                rec.token_request.upstream_token,
-            )
+            tr = rec.token_request
+            claims = rec.verified_resource_claims
+            if tr.secure_mode and claims:
+                aud = normalize_issuer(str(claims.get("aud", "")))
+                psn = normalize_issuer(self._ps_issuer)
+                cnf = rec.token_agent_cnf_jwk or tr.agent_cnf_jwk
+                if aud == psn and cnf is not None:
+                    auth = self._auth_issuer.issue(
+                        agent_id=tr.agent_id,
+                        agent_cnf_jwk=dict(cnf),
+                        resource_claims=claims,
+                        mission=tr.mission,
+                    )
+                else:
+                    auth = self._federator.request_auth_token(
+                        tr.resource_token,
+                        self._agent_jwt_stub,
+                        tr.upstream_token,
+                    )
+            else:
+                auth = self._federator.request_auth_token(
+                    tr.resource_token,
+                    self._agent_jwt_stub,
+                    tr.upstream_token,
+                )
             if isinstance(auth, DeferredResponse):
                 raise RuntimeError("federator unexpectedly deferred")
             self._store.resolve_pending(pending_id, auth)

@@ -1,0 +1,62 @@
+"""Issue PS-signed ``aa-auth+jwt`` (SPEC §Auth Token, three-party)."""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+import aauth
+
+from ps.models import AuthTokenResponse, MissionRef
+from ps.service.signing import PSSigningService
+
+
+class AuthTokenIssuer:
+    def __init__(
+        self,
+        ps_origin: str,
+        signing: PSSigningService,
+        *,
+        user_sub: str,
+        auth_token_lifetime_seconds: int = 3600,
+    ) -> None:
+        self._iss = ps_origin.rstrip("/")
+        self._signing = signing
+        self._user_sub = user_sub
+        lt = min(auth_token_lifetime_seconds, 3600)
+        self._lifetime = max(60, lt)
+
+    def issue(
+        self,
+        *,
+        agent_id: str,
+        agent_cnf_jwk: dict[str, Any],
+        resource_claims: dict[str, Any],
+        mission: MissionRef | None,
+    ) -> AuthTokenResponse:
+        resource_iss = str(resource_claims["iss"])
+        scope = str(resource_claims.get("scope", ""))
+        mission_obj: dict[str, Any] | None = None
+        if mission is not None:
+            mission_obj = {"approver": mission.approver, "s256": mission.s256}
+        elif resource_claims.get("mission") is not None:
+            m = resource_claims["mission"]
+            if isinstance(m, dict):
+                mission_obj = dict(m)
+
+        exp = int(time.time()) + self._lifetime
+        token = aauth.create_auth_token(
+            iss=self._iss,
+            aud=resource_iss,
+            agent=agent_id,
+            cnf_jwk=agent_cnf_jwk,
+            private_key=self._signing.private_key,
+            kid=self._signing.kid,
+            act={"sub": agent_id},
+            scope=scope,
+            sub=self._user_sub,
+            exp=exp,
+            mission=mission_obj,
+            dwk="aauth-person.json",
+        )
+        return AuthTokenResponse(auth_token=token, expires_in=self._lifetime)

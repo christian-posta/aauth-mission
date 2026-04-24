@@ -41,6 +41,7 @@ from agent_server.http.errors import aauth_json_error as as_aauth_json_error
 from agent_server.impl import ASContainer, build_memory_as
 from agent_server.models import VerifiedRequest
 from ps.api.admin_routes import get_mission_route, list_missions_route, patch_mission
+from ps.api.trust_routes import TrustedAgentIn, handle_add_trusted, handle_list_trusted, handle_remove_trusted
 from ps.api.agent_routes import (
     ClarificationPostBody,
     UpdatedTokenPostBody,
@@ -58,6 +59,7 @@ from ps.api.user_mission_routes import (
 )
 from ps.api.user_routes import get_interaction_route, post_decision_route
 from ps.exceptions import (
+    AgentTokenRejectError,
     ClarificationLimitError,
     ForbiddenOwnerError,
     InvalidInteractionCodeError,
@@ -66,10 +68,18 @@ from ps.exceptions import (
     PendingDeniedError as PSPendingDeniedError,
     PendingExpiredError,
     PendingGoneError,
+    ResourceTokenRejectError,
     SlowDownError,
 )
 from ps.http.config import PSHttpSettings
-from ps.http.deps import get_settings as get_ps_settings_dep, parse_prefer_wait, require_agent_id
+from ps.federation.agent_jwks import DeferredAgentSelfJWKS
+from ps.http.deps import (
+    TokenAgentContext,
+    get_settings as get_ps_settings_dep,
+    parse_prefer_wait,
+    require_agent_id,
+    require_token_agent,
+)
 from ps.http.encoding import (
     auth_token_http_dict,
     build_aauth_requirement_header,
@@ -277,12 +287,19 @@ def create_portal_app(
         }
     )
 
+    defer_as_jwks = DeferredAgentSelfJWKS()
     ps: PSContainer = build_memory_ps(
         public_origin=ps_settings.public_origin,
         auto_approve_token=ps_settings.auto_approve_token,
         auto_approve_mission=ps_settings.auto_approve_mission,
         agent_jwt_stub=ps_settings.agent_jwt_stub,
         pending_ttl_seconds=ps_settings.pending_ttl_seconds,
+        signing_key_path=ps_settings.signing_key_path,
+        trust_file=ps_settings.trust_file,
+        auth_token_lifetime=ps_settings.auth_token_lifetime,
+        user_id=ps_settings.user_id,
+        insecure_dev=ps_settings.insecure_dev,
+        self_jwks_provider=defer_as_jwks,
     )
     container: ASContainer = build_memory_as(
         issuer=as_settings.issuer,
@@ -293,6 +310,7 @@ def create_portal_app(
         registration_ttl=as_settings.registration_ttl,
         signature_window=as_settings.signature_window,
     )
+    defer_as_jwks.set(container.signing.get_jwks)
 
     app = FastAPI(
         title="AAuth Person Portal",
@@ -361,6 +379,18 @@ def create_portal_app(
             aauth_errors.ERROR_INVALID_REQUEST,
             "clarification round limit exceeded",
         )
+
+    @app.exception_handler(ResourceTokenRejectError)
+    async def resource_token_reject_handler(
+        _request: Request, exc: ResourceTokenRejectError
+    ) -> JSONResponse:
+        return ps_aauth_json_error(401, exc.error, exc.message)
+
+    @app.exception_handler(AgentTokenRejectError)
+    async def agent_token_reject_handler(
+        _request: Request, exc: AgentTokenRejectError
+    ) -> JSONResponse:
+        return ps_aauth_json_error(401, exc.error, exc.message)
 
     @app.exception_handler(ForbiddenOwnerError)
     async def forbidden_owner_handler(_request: Request, _exc: ForbiddenOwnerError) -> JSONResponse:
@@ -458,7 +488,9 @@ def create_portal_app(
 
     @app.get("/.well-known/jwks.json")
     def jwks() -> dict[str, Any]:
-        return container.signing.get_jwks()
+        ps_keys = ps.ps_signing.get_jwks().get("keys", [])
+        as_keys = container.signing.get_jwks().get("keys", [])
+        return {"keys": [*ps_keys, *as_keys]}
 
     # --- PS routes ---
     @app.post("/mission")
@@ -486,7 +518,7 @@ def create_portal_app(
     async def post_token(
         body: TokenRequestBody,
         request: Request,
-        agent_id: Annotated[str, Depends(require_agent_id)],
+        tok_agent: Annotated[TokenAgentContext, Depends(require_token_agent)],
     ):
         prefer = parse_prefer_wait(request.headers.get("prefer"))
         if prefer is not None:
@@ -499,7 +531,7 @@ def create_portal_app(
         if mref is None and hdr_m is not None:
             mref = hdr_m
         req = TokenRequest(
-            agent_id=agent_id,
+            agent_id=tok_agent.agent_id,
             resource_token=body.resource_token,
             justification=just,
             upstream_token=body.upstream_token,
@@ -507,6 +539,9 @@ def create_portal_app(
             tenant=body.tenant,
             domain_hint=body.domain_hint,
             mission=mref,
+            agent_cnf_jwk=tok_agent.agent_cnf_jwk,
+            agent_jkt=tok_agent.agent_jkt,
+            secure_mode=tok_agent.secure_mode,
         )
         out = request_token_route(ps.token_broker, req)
         return _token_outcome_response(out)
@@ -736,6 +771,38 @@ def create_portal_app(
     @app.get("/admin/pending")
     def admin_list_pending(_admin: Annotated[None, Depends(require_portal_admin)]) -> list[dict[str, Any]]:
         return ps.pending_store.list_open_pending_for_admin()
+
+    @app.get("/person/trusted-agent-servers")
+    def list_trusted_agent_servers_portal(
+        _admin: Annotated[None, Depends(require_portal_admin)],
+    ) -> list[dict[str, Any]]:
+        return handle_list_trusted(ps.trust_registry, ps_origin=ps_settings.public_origin.rstrip("/"))
+
+    @app.post("/person/trusted-agent-servers", status_code=201)
+    def add_trusted_agent_server_portal(
+        body: TrustedAgentIn,
+        _admin: Annotated[None, Depends(require_portal_admin)],
+    ) -> dict[str, Any]:
+        try:
+            entry = handle_add_trusted(ps.trust_registry, body)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {
+            "issuer": entry.issuer,
+            "display_name": entry.display_name,
+            "jwks_uri": entry.jwks_uri,
+            "jwks_fingerprint": entry.jwks_fingerprint,
+            "added_at": entry.added_at,
+        }
+
+    @app.delete("/person/trusted-agent-servers", status_code=204)
+    def remove_trusted_agent_server_portal(
+        issuer: str,
+        _admin: Annotated[None, Depends(require_portal_admin)],
+    ) -> Response:
+        if not handle_remove_trusted(ps.trust_registry, issuer):
+            raise HTTPException(status_code=404, detail="issuer not in trust registry")
+        return Response(status_code=204)
 
     # --- AS agent-facing ---
     @app.post("/register", status_code=202)

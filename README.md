@@ -25,6 +25,7 @@ On April 23, 2026, the commands and scripts below were re-run successfully again
 - `pytest`
 - `./scripts/ps-demo.sh`
 - `./scripts/hwk-ps-client.sh`
+- `.venv/bin/python scripts/ps-token-mode3.py` (portal with `AAUTH_PS_INSECURE_DEV=false`, `AAUTH_AS_INSECURE_DEV=true`; `AAUTH_PS_AUTO_APPROVE_TOKEN` optional if the minted resource scope omits `require:user`; see script docstring)
 - `./scripts/agent-server-walkthrough.sh`
 - `.venv/bin/python scripts/agent-server-signed-walkthrough.py`
 
@@ -140,7 +141,8 @@ Notes:
 
 - The script intentionally pauses on deferred consent and polls until the user approves.
 - Approve in the portal UI, or call `GET /consent?code=...` followed by `POST /consent/{pending_id}/decision`.
-- A successful completion returns a fake `auth_token` string, not a JWT.
+- With **`AAUTH_PS_INSECURE_DEV=true`**, a successful completion returns a **fake** `auth_token` string (`aa-auth.fake.*`), not a JWT.
+- With **`AAUTH_PS_INSECURE_DEV=false`** (production-style), **`POST /token`** requires **`scheme=jwt`** and a verifiable **`aa-resource+jwt`**; the response **`auth_token`** is a real **`aa-auth+jwt`** (see **`CLIENTS.md`** § mode 3 and **`scripts/ps-token-mode3.py`**).
 
 ### Agent Server Walkthrough (insecure dev)
 
@@ -293,10 +295,15 @@ uvicorn agent_server.http.app:app --host 127.0.0.1 --port 8800
 | `AAUTH_PS_ADMIN_TOKEN` | unset | Bearer token for `/missions` and `/admin/pending`. If unset, admin routes are open. |
 | `AAUTH_PS_USER_TOKEN` | unset | Enables `/user/*` routes. |
 | `AAUTH_PS_USER_ID` | `user` | Owner id returned for the configured legal-user token. |
-| `AAUTH_PS_AUTO_APPROVE_TOKEN` | `false` | Skip consent on `POST /token`. |
+| `AAUTH_PS_AUTO_APPROVE_TOKEN` | `false` | If `true`, skip all consent on `POST /token`. If `false` (secure mode), consent runs only when the verified resource token `scope` includes `require:user` (space-separated); otherwise the auth token is issued immediately. |
 | `AAUTH_PS_AUTO_APPROVE_MISSION` | `true` | If `false`, mission creation is deferred for approval. |
 | `AAUTH_PS_PENDING_TTL_SECONDS` | `600` | TTL for open Person Server pending rows. |
 | `AAUTH_PS_JWKS_URI` | unset | Override `jwks_uri` in Person metadata. |
+| `AAUTH_PS_SIGNING_KEY_PATH` | `./.aauth/ps-signing-key.pem` | PS Ed25519 key PEM for **`aa-auth+jwt`**; generated on first boot. Set to empty string for an ephemeral in-memory key (tests only). |
+| `AAUTH_PS_TRUST_FILE` | `./.aauth/ps-trusted-agents.json` | Optional JSON persistence for the **Trusted Agent Servers** registry. Empty string disables persistence. |
+| `AAUTH_PS_AUTH_TOKEN_LIFETIME` | `3600` | Lifetime (seconds) for PS-issued auth JWTs (max 1h per SPEC). |
+
+**Trust policy** for agent token issuers (mode 3) is documented in **`TRUST.md`**. **Client wire format** for secure **`POST /token`** is in **`CLIENTS.md`** (§ Person Server as authorization server).
 
 ### Agent Server / Portal (`AAUTH_AS_*`)
 
@@ -319,8 +326,9 @@ uvicorn agent_server.http.app:app --host 127.0.0.1 --port 8800
 ### Person Server endpoints
 
 - `GET /.well-known/aauth-person.json`
+- `GET /.well-known/jwks.json` — PS signing JWKS (portal merges Person Server + Agent Server keys at this path)
 - `POST /mission`
-- `POST /token`
+- `POST /token` — With **`AAUTH_PS_INSECURE_DEV=false`**, requires **`Signature-Key`** **`scheme=jwt`** (see **`CLIENTS.md`** mode 3); with **`true`**, HWK or **`X-AAuth-Agent-Id`** still accepted for demos.
 - `POST /permission`
 - `POST /audit`
 - `POST /interaction`
@@ -337,6 +345,9 @@ uvicorn agent_server.http.app:app --host 127.0.0.1 --port 8800
 - `PATCH /user/missions/{s256}`
 - `GET /user/consent`
 - `GET /admin/pending`
+- `GET /person/trusted-agent-servers` — list trusted agent-server issuers (admin auth when configured)
+- `POST /person/trusted-agent-servers` — add trusted issuer (probes `aauth-agent.json` + JWKS)
+- `DELETE /person/trusted-agent-servers?issuer=...` — remove trusted issuer
 
 ### Agent Server endpoints
 
@@ -362,4 +373,4 @@ Run the smoke tests:
 pytest
 ```
 
-Coverage includes [tests/test_ps_api_smoke.py](tests/test_ps_api_smoke.py) (Person Server) and [tests/test_agent_server_register.py](tests/test_agent_server_register.py) (Agent Server `agent_name` / registration body validation).
+Coverage includes [tests/test_ps_api_smoke.py](tests/test_ps_api_smoke.py) (Person Server), [tests/test_ps_token_endpoint.py](tests/test_ps_token_endpoint.py) (mode-3 **`POST /token`**), and [tests/test_agent_server_register.py](tests/test_agent_server_register.py) (Agent Server `agent_name` / registration body validation).

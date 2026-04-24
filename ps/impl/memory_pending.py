@@ -323,6 +323,7 @@ class MemoryPendingStore(PendingRequestStore):
             req_val = rec.requirement.value if rec.requirement is not None else None
             st_val = rec.status.value
             code = rec.interaction_code if rec.requirement == RequirementLevel.INTERACTION else None
+            vclaims = rec.verified_resource_claims or {}
             out.append(
                 {
                     "pending_id": rec.pending_id,
@@ -335,6 +336,8 @@ class MemoryPendingStore(PendingRequestStore):
                     "interaction_url": f"{self.interaction_base_url}{CONSENT_UI_PATH}",
                     "pending_url": _pending_path(rec.pending_id),
                     "justification": rec.token_request.justification if rec.token_request else None,
+                    "resource_iss": vclaims.get("iss") if vclaims else None,
+                    "resource_scope": vclaims.get("scope") if vclaims else None,
                 }
             )
         return sorted(out, key=lambda r: r["pending_id"])

@@ -104,6 +104,76 @@
         <section class="mt-12">
           <div class="flex flex-wrap items-center justify-between gap-4">
             <div>
+              <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Trusted agent servers</h2>
+              <p class="mt-0.5 max-w-2xl text-xs text-zinc-600">
+                For <span class="text-zinc-500">POST /token</span> with <code class="rounded bg-zinc-950 px-1 font-mono text-zinc-400">scheme=jwt</code>, the Person
+                Server verifies agent JWTs only from this host (same <code class="font-mono text-zinc-500">iss</code> as the portal) or from issuers you add here.
+                See <code class="font-mono text-zinc-500">TRUST.md</code>.
+              </p>
+            </div>
+            <button type="button" @click="loadTrusted()" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm hover:bg-zinc-800">Refresh</button>
+          </div>
+          <p x-show="trustedError" class="mt-4 text-sm text-red-400" x-text="trustedError"></p>
+          <div x-show="trustedLoading" class="mt-4 text-sm text-zinc-500">Loading…</div>
+          <div x-show="!trustedLoading && trusted.length" class="mt-4 space-y-3">
+            <template x-for="row in trusted" :key="row.issuer + (row.implicit ? '-implicit' : '')">
+              <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="font-medium text-white" x-text="row.display_name || row.issuer"></p>
+                    <p class="mt-1 break-all font-mono text-xs text-zinc-500" x-text="row.issuer"></p>
+                    <p class="mt-1 text-xs text-zinc-600" x-show="row.jwks_uri">
+                      <span class="text-zinc-500">jwks_uri</span>
+                      <span class="ml-1 break-all font-mono text-zinc-500" x-text="row.jwks_uri"></span>
+                    </p>
+                    <p class="mt-1 font-mono text-xs text-zinc-600" x-show="row.jwks_fingerprint">
+                      fp <span x-text="row.jwks_fingerprint"></span>
+                    </p>
+                    <p class="mt-1 text-xs text-amber-200/80" x-show="row.implicit">Implicit — co-located agent JWKS on this origin</p>
+                  </div>
+                  <button
+                    type="button"
+                    x-show="!row.implicit"
+                    @click="removeTrustedIssuer(row)"
+                    class="shrink-0 rounded-lg border border-red-900 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/20"
+                  >Remove</button>
+                </div>
+              </div>
+            </template>
+          </div>
+          <form @submit.prevent="addTrustedIssuer()" class="mt-6 flex flex-wrap items-end gap-3">
+            <div>
+              <label class="block text-xs text-zinc-500">Issuer URL</label>
+              <input
+                type="url"
+                required
+                x-model="trustIssuerInput"
+                class="mt-1 w-72 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
+                placeholder="https://external-agent.example"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-500">Display name (optional)</label>
+              <input
+                type="text"
+                x-model="trustDisplayName"
+                class="mt-1 w-56 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
+                placeholder="Partner AS"
+              />
+            </div>
+            <button
+              type="submit"
+              class="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+              :disabled="trustAddBusy"
+              x-text="trustAddBusy ? 'Adding…' : 'Add trust'"
+            ></button>
+          </form>
+          <p x-show="trustAddMsg" class="mt-2 text-xs text-emerald-400" x-text="trustAddMsg"></p>
+        </section>
+
+        <section class="mt-12">
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div>
               <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Active agents</h2>
               <p class="mt-0.5 text-xs text-zinc-600">Bindings and revoke</p>
             </div>
@@ -669,6 +739,13 @@
           pending: [],
           pendingLoading: true,
           pendingError: "",
+          trusted: [],
+          trustedLoading: false,
+          trustedError: "",
+          trustIssuerInput: "",
+          trustDisplayName: "",
+          trustAddBusy: false,
+          trustAddMsg: "",
           _pendingTimer: null,
           manualStablePubJson: "",
           manualAgentName: "",
@@ -700,6 +777,7 @@
             this.loadRegs();
             this.loadBindings();
             this.loadPending();
+            this.loadTrusted();
             this._pendingTimer = setInterval(function () {
               if (this.tab === "tokens") this.loadPending();
             }.bind(this), 10000);
@@ -707,6 +785,7 @@
           onTabChange() {
             if (this.tab === "missions" && this.missions.length === 0 && !this.missionsLoading) this.loadMissions();
             if (this.tab === "tokens") this.loadPending();
+            if (this.tab === "agents") this.loadTrusted();
           },
           signOut() {
             PortalAuth.clear();
@@ -881,6 +960,68 @@
               this.manualBindError = e.message || String(e);
             } finally {
               this.manualBindSubmitting = false;
+            }
+          },
+
+          async loadTrusted() {
+            this.trustedError = "";
+            this.trustedLoading = true;
+            try {
+              this.trusted = await PortalApi.fetchJson("/person/trusted-agent-servers");
+            } catch (e) {
+              this.trustedError = e.message || String(e);
+            } finally {
+              this.trustedLoading = false;
+            }
+          },
+
+          async addTrustedIssuer() {
+            this.trustAddMsg = "";
+            this.trustedError = "";
+            var iss = (this.trustIssuerInput || "").trim();
+            if (!iss) return;
+            this.trustAddBusy = true;
+            try {
+              await PortalApi.fetchJson("/person/trusted-agent-servers", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  issuer: iss,
+                  display_name: (this.trustDisplayName || "").trim(),
+                }),
+              });
+              this.trustIssuerInput = "";
+              this.trustDisplayName = "";
+              this.trustAddMsg = "Issuer added to trust registry.";
+              await this.loadTrusted();
+            } catch (e) {
+              this.trustedError = e.message || String(e);
+            } finally {
+              this.trustAddBusy = false;
+            }
+          },
+
+          async removeTrustedIssuer(row) {
+            if (!row || row.implicit) return;
+            if (!confirm("Remove trust for " + row.issuer + "?")) return;
+            this.trustedError = "";
+            try {
+              var r = await PortalApi.fetch(
+                "/person/trusted-agent-servers?issuer=" + encodeURIComponent(row.issuer),
+                { method: "DELETE" }
+              );
+              if (!r.ok) {
+                var body = null;
+                try {
+                  body = await r.json();
+                } catch (e) {}
+                throw new Error(
+                  (body && body.detail) || r.statusText || "Remove failed (" + r.status + ")"
+                );
+              }
+              await this.loadTrusted();
+            } catch (e) {
+              this.trustedError = e.message || String(e);
             }
           },
 

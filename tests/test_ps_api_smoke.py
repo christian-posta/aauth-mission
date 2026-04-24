@@ -143,9 +143,10 @@ def test_consent_includes_mission_for_deferred_token_with_mission(client: TestCl
 
 
 def test_post_token_hwk_signed(client: TestClient) -> None:
+    # POST /token accepts HWK (or X-AAuth-Agent-Id) only when insecure dev is enabled.
     app = create_app(
         PSHttpSettings(
-            insecure_dev=False,
+            insecure_dev=True,
             public_origin="http://test.example",
             auto_approve_token=True,
             admin_token=None,

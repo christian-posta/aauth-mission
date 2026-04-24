@@ -54,3 +54,21 @@ class MissionTerminatedError(Exception):
     """Referenced mission is not active; HTTP 403 mission_terminated."""
 
     pass
+
+
+class ResourceTokenRejectError(Exception):
+    """Invalid or expired resource token on ``POST /token`` (secure mode)."""
+
+    def __init__(self, message: str, *, error: str) -> None:
+        super().__init__(message)
+        self.error = error
+        self.message = message
+
+
+class AgentTokenRejectError(Exception):
+    """Invalid agent HTTP signature or ``aa-agent+jwt`` on secure ``POST /token``."""
+
+    def __init__(self, message: str, *, error: str) -> None:
+        super().__init__(message)
+        self.error = error
+        self.message = message
