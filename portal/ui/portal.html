@@ -40,7 +40,17 @@
             ></button>
           </template>
         </nav>
-        <button type="button" @click="signOut()" class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800">Sign out</button>
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            @click="openWellKnownModal()"
+            class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+            title="View /.well-known metadata and JWKS for Person and Agent servers"
+          >
+            Metadata &amp; JWKS
+          </button>
+          <button type="button" @click="signOut()" class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800">Sign out</button>
+        </div>
       </div>
     </header>
 
@@ -420,6 +430,147 @@
       </div>
     </div>
 
+    <!-- Well-known metadata + JWKS -->
+    <div
+      x-show="wellKnownOpen"
+      x-cloak
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      @keydown.escape.window="closeWellKnownModal()"
+      @click.self="closeWellKnownModal()"
+    >
+      <div
+        class="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+        @click.stop
+      >
+        <div class="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+          <div>
+            <h3 class="text-lg font-medium text-white">Well-known metadata &amp; JWKS</h3>
+            <p class="mt-0.5 text-xs text-zinc-500">Person and Agent server discovery from this host</p>
+          </div>
+          <button
+            type="button"
+            class="shrink-0 text-2xl leading-none text-zinc-500 hover:text-white"
+            @click="closeWellKnownModal()"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div x-show="wellKnownLoading" class="px-5 py-8 text-center text-sm text-zinc-500">Loading…</div>
+        <p x-show="!wellKnownLoading && wellKnownError" class="px-5 py-4 text-sm text-red-400" x-text="wellKnownError"></p>
+        <div x-show="!wellKnownLoading && !wellKnownError" class="flex max-h-[calc(90vh-5.5rem)] min-h-0 flex-col">
+          <div class="flex shrink-0 border-b border-zinc-800 px-3">
+            <button
+              type="button"
+              @click="wellKnownView = 'person'"
+              class="rounded-t-lg border-b-2 px-4 py-2.5 text-sm"
+              :class="wellKnownView === 'person' ? 'border-sky-500 text-sky-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'"
+            >
+              Person server
+            </button>
+            <button
+              type="button"
+              @click="wellKnownView = 'agent'"
+              class="rounded-t-lg border-b-2 px-4 py-2.5 text-sm"
+              :class="wellKnownView === 'agent' ? 'border-sky-500 text-sky-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'"
+            >
+              Agent server
+            </button>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto p-4">
+            <div x-show="wellKnownView === 'person'">
+              <p class="mb-2 text-xs text-zinc-500">
+                <code class="text-zinc-400">GET /.well-known/aauth-person.json</code>
+                <span x-show="wellKnownPersonJwksUrl" class="ml-2">
+                  &middot; JWKS (same-origin fetch):
+                  <code class="text-zinc-400" x-text="wellKnownPersonJwksUrl"></code>
+                </span>
+              </p>
+              <p
+                x-show="wellKnownPersonJwksUrlMeta && wellKnownPersonJwksUrlMeta !== wellKnownPersonJwksUrl"
+                class="mb-2 text-xs text-zinc-600"
+              >
+                <code class="text-zinc-500">jwks_uri</code> in metadata (may use another loopback name):
+                <code class="text-zinc-500" x-text="wellKnownPersonJwksUrlMeta"></code>
+              </p>
+              <div class="mb-1 flex items-center justify-between">
+                <span class="text-xs font-medium uppercase tracking-wide text-zinc-500">aauth-person.json</span>
+                <button
+                  type="button"
+                  class="text-xs text-sky-400 hover:underline"
+                  @click="copy(wellKnownPersonMeta)"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre
+                class="mb-6 max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 font-mono text-xs text-zinc-300"
+                x-text="wellKnownPersonMeta"
+              ></pre>
+              <div class="mb-1 flex items-center justify-between">
+                <span class="text-xs font-medium uppercase tracking-wide text-zinc-500">JWKS</span>
+                <button
+                  type="button"
+                  class="text-xs text-sky-400 hover:underline"
+                  @click="copy(wellKnownPersonJwks)"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre
+                class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 font-mono text-xs text-zinc-300"
+                x-text="wellKnownPersonJwks"
+              ></pre>
+            </div>
+            <div x-show="wellKnownView === 'agent'">
+              <p class="mb-2 text-xs text-zinc-500">
+                <code class="text-zinc-400">GET /.well-known/aauth-agent.json</code>
+                <span x-show="wellKnownAgentJwksUrl" class="ml-2">
+                  &middot; JWKS (same-origin fetch):
+                  <code class="text-zinc-400" x-text="wellKnownAgentJwksUrl"></code>
+                </span>
+              </p>
+              <p
+                x-show="wellKnownAgentJwksUrlMeta && wellKnownAgentJwksUrlMeta !== wellKnownAgentJwksUrl"
+                class="mb-2 text-xs text-zinc-600"
+              >
+                <code class="text-zinc-500">jwks_uri</code> in metadata (may use another loopback name):
+                <code class="text-zinc-500" x-text="wellKnownAgentJwksUrlMeta"></code>
+              </p>
+              <div class="mb-1 flex items-center justify-between">
+                <span class="text-xs font-medium uppercase tracking-wide text-zinc-500">aauth-agent.json</span>
+                <button
+                  type="button"
+                  class="text-xs text-sky-400 hover:underline"
+                  @click="copy(wellKnownAgentMeta)"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre
+                class="mb-6 max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 font-mono text-xs text-zinc-300"
+                x-text="wellKnownAgentMeta"
+              ></pre>
+              <div class="mb-1 flex items-center justify-between">
+                <span class="text-xs font-medium uppercase tracking-wide text-zinc-500">JWKS</span>
+                <button
+                  type="button"
+                  class="text-xs text-sky-400 hover:underline"
+                  @click="copy(wellKnownAgentJwks)"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre
+                class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 font-mono text-xs text-zinc-300"
+                x-text="wellKnownAgentJwks"
+              ></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Mission detail modal -->
     <div
       x-show="missionDetail"
@@ -460,6 +611,33 @@
     <style>[x-cloak] { display: none !important; }</style>
 
     <script>
+      /**
+       * jwks_uri in metadata is often an absolute URL built from env (e.g. http://127.0.0.1:8765/...).
+       * Browsers treat http://127.0.0.1 and http://localhost as *different* origins, so
+       * fetch(absoluteJwkUriFromMetadata) from a page on localhost is cross-origin and fails
+       * without CORS. When both hosts are loopback and the port matches, fetch using the current
+       * page origin with the same path+query.
+       */
+      function _isLoopbackHost(hostname) {
+        if (!hostname) return false;
+        var h = String(hostname).toLowerCase();
+        if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
+        if (h === "[::1]") return true;
+        if (h.endsWith(".localhost")) return true;
+        return false;
+      }
+      function resolveJwksFetchUrl(jwksUri) {
+        if (!jwksUri) return null;
+        var u = new URL(String(jwksUri), location.origin);
+        var page = new URL(location.href);
+        if (u.origin === page.origin) {
+          return u.href;
+        }
+        if (u.port === page.port && _isLoopbackHost(u.hostname) && _isLoopbackHost(page.hostname)) {
+          return page.origin + u.pathname + u.search;
+        }
+        return u.href;
+      }
       function portalDash() {
         return {
           tab: "agents",
@@ -497,6 +675,18 @@
           manualBindOpen: false,
           manualBindError: "",
           manualBindSubmitting: false,
+          wellKnownOpen: false,
+          wellKnownLoading: false,
+          wellKnownError: "",
+          wellKnownView: "person",
+          wellKnownPersonMeta: "",
+          wellKnownPersonJwks: "",
+          wellKnownPersonJwksUrl: "",
+          wellKnownPersonJwksUrlMeta: "",
+          wellKnownAgentMeta: "",
+          wellKnownAgentJwks: "",
+          wellKnownAgentJwksUrl: "",
+          wellKnownAgentJwksUrlMeta: "",
 
           get activeBindings() {
             return this.bindings.filter(function (b) { return !b.revoked; });
@@ -521,6 +711,98 @@
           signOut() {
             PortalAuth.clear();
             location.href = "index.html";
+          },
+          closeWellKnownModal() {
+            this.wellKnownOpen = false;
+            this.wellKnownError = "";
+          },
+          async openWellKnownModal() {
+            this.wellKnownOpen = true;
+            this.wellKnownError = "";
+            this.wellKnownView = "person";
+            this.wellKnownPersonMeta = "";
+            this.wellKnownPersonJwks = "";
+            this.wellKnownPersonJwksUrl = "";
+            this.wellKnownPersonJwksUrlMeta = "";
+            this.wellKnownAgentMeta = "";
+            this.wellKnownAgentJwks = "";
+            this.wellKnownAgentJwksUrl = "";
+            this.wellKnownAgentJwksUrlMeta = "";
+            this.wellKnownLoading = true;
+            try {
+              var pRes;
+              var aRes;
+              try {
+                [pRes, aRes] = await Promise.all([
+                  fetch("/.well-known/aauth-person.json"),
+                  fetch("/.well-known/aauth-agent.json"),
+                ]);
+              } catch (e) {
+                throw new Error("Network error loading well-known: " + (e.message || String(e)));
+              }
+              if (!pRes.ok) {
+                throw new Error("aauth-person.json — HTTP " + pRes.status);
+              }
+              if (!aRes.ok) {
+                throw new Error("aauth-agent.json — HTTP " + aRes.status);
+              }
+              var person = await pRes.json();
+              var agent = await aRes.json();
+              this.wellKnownPersonMeta = JSON.stringify(person, null, 2);
+              this.wellKnownAgentMeta = JSON.stringify(agent, null, 2);
+              this.wellKnownPersonJwksUrlMeta = person.jwks_uri || "";
+              this.wellKnownAgentJwksUrlMeta = agent.jwks_uri || "";
+              var personFetchUrl = person.jwks_uri ? resolveJwksFetchUrl(person.jwks_uri) : "";
+              var agentFetchUrl = agent.jwks_uri ? resolveJwksFetchUrl(agent.jwks_uri) : "";
+              this.wellKnownPersonJwksUrl = personFetchUrl;
+              this.wellKnownAgentJwksUrl = agentFetchUrl;
+              var jTasks = [];
+              if (person.jwks_uri) {
+                jTasks.push(
+                  (function (url) {
+                    return fetch(url).then(function (r) {
+                      if (!r.ok) {
+                        throw new Error("Person JWKS (" + url + ") — HTTP " + r.status);
+                      }
+                      return r.json();
+                    });
+                  })(personFetchUrl)
+                );
+              }
+              if (agent.jwks_uri) {
+                jTasks.push(
+                  (function (url) {
+                    return fetch(url).then(function (r) {
+                      if (!r.ok) {
+                        throw new Error("Agent JWKS (" + url + ") — HTTP " + r.status);
+                      }
+                      return r.json();
+                    });
+                  })(agentFetchUrl)
+                );
+              }
+              if (jTasks.length) {
+                var jwksData = await Promise.all(jTasks);
+                var jIdx = 0;
+                if (person.jwks_uri) {
+                  this.wellKnownPersonJwks = JSON.stringify(jwksData[jIdx++], null, 2);
+                } else {
+                  this.wellKnownPersonJwks = "— (no jwks_uri in metadata)";
+                }
+                if (agent.jwks_uri) {
+                  this.wellKnownAgentJwks = JSON.stringify(jwksData[jIdx], null, 2);
+                } else {
+                  this.wellKnownAgentJwks = "— (no jwks_uri in metadata)";
+                }
+              } else {
+                this.wellKnownPersonJwks = "— (no jwks_uri in metadata)";
+                this.wellKnownAgentJwks = "— (no jwks_uri in metadata)";
+              }
+            } catch (e) {
+              this.wellKnownError = e.message || String(e);
+            } finally {
+              this.wellKnownLoading = false;
+            }
           },
           truncateStr(s, maxLen) {
             maxLen = maxLen || 16;
