@@ -16,3 +16,5 @@ scripts/.hwk-mm-client-key.pem
 
 # Generated PS / portal signing keys and trust store (AAUTH_PS_* defaults)
 .aauth/
+# Local SQLite file when using run-server.sh
+/aauth.db

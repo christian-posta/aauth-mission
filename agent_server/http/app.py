@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -60,23 +62,49 @@ class LinkBody(BaseModel):
 
 def create_agent_app(settings: AgentServerSettings | None = None) -> FastAPI:
     settings = settings or AgentServerSettings()
-    container: ASContainer = build_memory_as(
-        issuer=settings.issuer,
-        server_domain=settings.server_domain,
-        signing_key_path=settings.signing_key_path,
-        previous_key_path=settings.previous_key_path,
-        agent_token_lifetime=settings.agent_token_lifetime,
-        registration_ttl=settings.registration_ttl,
-        signature_window=settings.signature_window,
-    )
+    database_url = settings.database_url or os.environ.get("AAUTH_DATABASE_URL")
+    db_engine: Any = None
+    if database_url:
+        from persistence.wiring import build_engine_and_session_from_url, build_persisted_as, init_db
+
+        db_engine, session_factory = build_engine_and_session_from_url(database_url)
+        init_db(db_engine)
+        container: ASContainer = build_persisted_as(
+            session_factory,
+            issuer=settings.issuer,
+            server_domain=settings.server_domain,
+            signing_key_path=settings.signing_key_path,
+            previous_key_path=settings.previous_key_path,
+            agent_token_lifetime=settings.agent_token_lifetime,
+            registration_ttl=settings.registration_ttl,
+            signature_window=settings.signature_window,
+        )
+    else:
+        container = build_memory_as(
+            issuer=settings.issuer,
+            server_domain=settings.server_domain,
+            signing_key_path=settings.signing_key_path,
+            previous_key_path=settings.previous_key_path,
+            agent_token_lifetime=settings.agent_token_lifetime,
+            registration_ttl=settings.registration_ttl,
+            signature_window=settings.signature_window,
+        )
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> Any:
+        yield
+        if db_engine is not None:
+            db_engine.dispose()
 
     app = FastAPI(
         title="AAuth Agent Server",
         version="0.1.0",
         description="AAuth Agent Server reference implementation — Path B (direct registration + stable key renewal).",
+        lifespan=_lifespan,
     )
     app.state.settings = settings
     app.state.container = container
+    app.state.db_engine = db_engine
 
     meta = settings.metadata()
 

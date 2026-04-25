@@ -76,6 +76,10 @@ class PSHttpSettings(BaseSettings):
         le=3600,
         description="Lifetime in seconds for PS-issued aa-auth+jwt (SPEC max 1 hour).",
     )
+    database_url: str | None = Field(
+        default=None,
+        description="If set, persist PS state to this SQLAlchemy URL (SQLite, PostgreSQL, etc.).",
+    )
 
     @field_validator("signing_key_path", mode="before")
     @classmethod

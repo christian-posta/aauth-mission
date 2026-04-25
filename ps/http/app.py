@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -219,27 +221,59 @@ def _mission_outcome_response(out: Mission | DeferredResponse) -> Response | JSO
 
 def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContainer | None = None) -> FastAPI:
     settings = settings or PSHttpSettings()
-    ps: PSContainer = ps_container or build_memory_ps(
-        public_origin=settings.public_origin,
-        auto_approve_token=settings.auto_approve_token,
-        auto_approve_mission=settings.auto_approve_mission,
-        agent_jwt_stub=settings.agent_jwt_stub,
-        pending_ttl_seconds=settings.pending_ttl_seconds,
-        signing_key_path=settings.signing_key_path,
-        trust_file=settings.trust_file,
-        auth_token_lifetime=settings.auth_token_lifetime,
-        user_id=settings.user_id,
-        insecure_dev=settings.insecure_dev,
-        self_jwks_provider=None,
-    )
+    database_url = settings.database_url or os.environ.get("AAUTH_DATABASE_URL")
+    db_engine: Any = None
+    if ps_container is not None:
+        ps: PSContainer = ps_container
+    elif database_url:
+        from persistence.wiring import build_engine_and_session_from_url, build_persisted_ps, init_db
+
+        db_engine, session_factory = build_engine_and_session_from_url(database_url)
+        init_db(db_engine)
+        ps = build_persisted_ps(
+            session_factory,
+            public_origin=settings.public_origin,
+            auto_approve_token=settings.auto_approve_token,
+            auto_approve_mission=settings.auto_approve_mission,
+            agent_jwt_stub=settings.agent_jwt_stub,
+            pending_ttl_seconds=settings.pending_ttl_seconds,
+            signing_key_path=settings.signing_key_path,
+            trust_file=settings.trust_file,
+            auth_token_lifetime=settings.auth_token_lifetime,
+            user_id=settings.user_id,
+            insecure_dev=settings.insecure_dev,
+            self_jwks_provider=None,
+        )
+    else:
+        ps = build_memory_ps(
+            public_origin=settings.public_origin,
+            auto_approve_token=settings.auto_approve_token,
+            auto_approve_mission=settings.auto_approve_mission,
+            agent_jwt_stub=settings.agent_jwt_stub,
+            pending_ttl_seconds=settings.pending_ttl_seconds,
+            signing_key_path=settings.signing_key_path,
+            trust_file=settings.trust_file,
+            auth_token_lifetime=settings.auth_token_lifetime,
+            user_id=settings.user_id,
+            insecure_dev=settings.insecure_dev,
+            self_jwks_provider=None,
+        )
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI) -> Any:
+        yield
+        if db_engine is not None:
+            db_engine.dispose()
 
     app = FastAPI(
         title="AAuth Person Server",
         version="0.1.0",
-        description="In-memory Person Server reference API (SPEC.md).",
+        description="AAuth Person Server (in-memory or SQL-backed per configuration).",
+        lifespan=_lifespan,
     )
     app.state.settings = settings
     app.state.ps = ps
+    app.state.db_engine = db_engine
 
     meta = settings.metadata()
 

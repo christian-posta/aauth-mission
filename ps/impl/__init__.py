@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 
 from ps.federation.agent_jwks import AgentServerJWKSResolver
-from ps.federation.agent_server_trust import MemoryAgentServerTrustRegistry
+from ps.federation.agent_server_trust import AgentServerTrustRegistry, MemoryAgentServerTrustRegistry
 from ps.federation.as_federator import ASFederator
 from ps.federation.resource_jwks import ResourceJWKSFetcher, ResourceJWKSResolver
 from ps.impl.backend import PSBackend
+from ps.impl.mission_state import MissionStatePort
 from ps.impl.fake_federator import FakeASFederator
 from ps.impl.memory_consent import MemoryUserConsent
 from ps.impl.memory_control import MemoryMissionControl
@@ -28,8 +29,10 @@ from ps.service.user_consent import UserConsent
 
 @dataclass(frozen=True, slots=True)
 class PSContainer:
-    backend: PSBackend
-    pending_store: MemoryPendingStore
+    """Mission and mission log state. In memory mode this is a ``PSBackend``; SQL mode uses ``SqlMissionState``."""
+
+    mission: MissionStatePort
+    pending_store: Union[MemoryPendingStore, "DatabasePendingStore"]
     federator: ASFederator
     lifecycle: MissionLifecycle
     token_broker: TokenBroker
@@ -37,7 +40,7 @@ class PSContainer:
     mission_control: MissionControl
     governance: PsGovernance
     ps_signing: PSSigningService
-    trust_registry: MemoryAgentServerTrustRegistry
+    trust_registry: AgentServerTrustRegistry
     agent_jwks_resolver: AgentServerJWKSResolver
     resource_jwks_resolver: ResourceJWKSResolver
     auth_issuer: AuthTokenIssuer
@@ -108,7 +111,7 @@ def build_memory_ps(
     )
     control = MemoryMissionControl(backend)
     return PSContainer(
-        backend=backend,
+        mission=backend,
         pending_store=store,
         federator=federator,
         lifecycle=lifecycle,

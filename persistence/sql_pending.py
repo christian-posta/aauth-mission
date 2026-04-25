@@ -1,11 +1,22 @@
-"""In-memory PendingRequestStore."""
+"""SQL-backed pending store (mirrors ps.impl.memory_pending)."""
 
 from __future__ import annotations
 
 import secrets
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from persistence.models import PsPendingRow
+from persistence.serde import (
+    compute_is_open,
+    pending_record_from_dict,
+    pending_record_to_dict,
+    requirement_value,
+)
 from ps.exceptions import (
     InvalidInteractionCodeError,
     NotFoundError,
@@ -14,7 +25,9 @@ from ps.exceptions import (
     PendingGoneError,
     SlowDownError,
 )
-from ps.impl.backend import PSBackend, PendingRecord, utc_now
+from ps.impl.backend import PendingRecord, utc_now
+from ps.impl.memory_pending import CONSENT_UI_PATH, _pending_path
+from ps.impl.mission_state import MissionStatePort
 from ps.models import (
     AuthTokenResponse,
     DeferredResponse,
@@ -28,29 +41,41 @@ from ps.models import (
 )
 from ps.service.pending_store import PendingRequestStore
 
-# Minimum interval between polls (seconds); below this returns 429 slow_down per spec backoff guidance.
 _MIN_POLL_INTERVAL = 0.05
 
 
-def _pending_path(pending_id: str) -> str:
-    return f"/pending/{pending_id}"
+def _deferred(
+    rec: PendingRecord, interaction_base_url: str) -> DeferredResponse:
+    interaction_url: str | None = None
+    show_code: str | None = None
+    if rec.requirement == RequirementLevel.INTERACTION:
+        interaction_url = f"{interaction_base_url}{CONSENT_UI_PATH}"
+        show_code = rec.interaction_code
+    return DeferredResponse(
+        pending_id=rec.pending_id,
+        pending_url=_pending_path(rec.pending_id),
+        retry_after=0,
+        requirement=rec.requirement,
+        interaction_url=interaction_url,
+        code=show_code,
+        clarification=rec.clarification,
+        timeout=rec.timeout,
+        options=rec.options,
+        status=rec.status,
+    )
 
 
-# Human consent entry (browser). Loads `/ui/consent.html?code=...`; that page calls `GET /consent?code=...`.
-CONSENT_UI_PATH = "/ui/consent.html"
-
-
-class MemoryPendingStore(PendingRequestStore):
-    """If set, included on deferred responses when `requirement=interaction`."""
-
+class DatabasePendingStore(PendingRequestStore):
     def __init__(
         self,
-        backend: PSBackend,
+        session_factory: Callable[[], Session],
+        mission: MissionStatePort,
         interaction_base_url: str,
         *,
         default_ttl_seconds: int = 600,
     ) -> None:
-        self._b = backend
+        self._session_factory = session_factory
+        self._mission = mission
         self._interaction_base_url = interaction_base_url.rstrip("/")
         self._default_ttl_seconds = default_ttl_seconds
 
@@ -58,8 +83,58 @@ class MemoryPendingStore(PendingRequestStore):
     def interaction_base_url(self) -> str:
         return self._interaction_base_url
 
+    def _row_to_rec(self, row: PsPendingRow) -> PendingRecord:
+        return pending_record_from_dict(row.data)
+
+    def _load_row(self, pending_id: str) -> PsPendingRow | None:
+        with self._session_factory() as s:
+            return s.get(PsPendingRow, pending_id)
+
+    def _load(self, pending_id: str) -> PendingRecord | None:
+        r = self._load_row(pending_id)
+        if r is None:
+            return None
+        return self._row_to_rec(r)
+
+    def _save_rec(self, rec: PendingRecord) -> None:
+        data = pending_record_to_dict(rec)
+        is_open = compute_is_open(rec)
+        reqv = requirement_value(rec)
+        with self._session_factory() as s:
+            row = s.get(PsPendingRow, rec.pending_id)
+            if row is None:
+                s.add(
+                    PsPendingRow(
+                        pending_id=rec.pending_id,
+                        interaction_code=rec.interaction_code,
+                        owner_id=rec.owner_id,
+                        rec_kind=rec.kind,
+                        requirement=reqv,
+                        gone=rec.gone,
+                        code_unusable=False,
+                        is_open=is_open,
+                        data=data,
+                    )
+                )
+            else:
+                row.interaction_code = rec.interaction_code
+                row.owner_id = rec.owner_id
+                row.rec_kind = rec.kind
+                row.requirement = reqv
+                row.gone = rec.gone
+                row.is_open = is_open
+                row.data = data
+            s.commit()
+
+    def _update_row_meta(self, pending_id: str, *, code_unusable: bool | None = None) -> None:
+        with self._session_factory() as s:
+            row = s.get(PsPendingRow, pending_id)
+            if row is not None and code_unusable is not None:
+                row.code_unusable = code_unusable
+            s.commit()
+
     def _owner_for_token_request(self, req: TokenRequest) -> str | None:
-        for m in self._b.iter_missions():
+        for m in self._mission.iter_missions():
             if m.agent_id == req.agent_id and m.owner_id is not None:
                 return m.owner_id
         return None
@@ -86,8 +161,7 @@ class MemoryPendingStore(PendingRequestStore):
                 mission_proposal=original_request,
                 owner_id=original_request.owner_hint,
             )
-        self._b.pending[pending_id] = rec
-        self._b.code_index[code] = pending_id
+        self._save_rec(rec)
         return pending_id
 
     def create_interaction_pending(
@@ -103,7 +177,6 @@ class MemoryPendingStore(PendingRequestStore):
         relay_code: str | None = None,
         description: str | None = None,
     ) -> str:
-        """Deferred user step for POST /interaction (agent-facing)."""
         pending_id = secrets.token_urlsafe(12).replace("-", "")[:16]
         code = secrets.token_urlsafe(16)
         rec = PendingRecord(
@@ -121,18 +194,16 @@ class MemoryPendingStore(PendingRequestStore):
             mission_s256=mission_s256,
             interaction_description=description,
         )
-        self._b.pending[pending_id] = rec
-        self._b.code_index[code] = pending_id
+        self._save_rec(rec)
         return pending_id
 
     def _require(self, pending_id: str) -> PendingRecord:
-        rec = self._b.pending.get(pending_id)
+        rec = self._load(pending_id)
         if rec is None:
             raise NotFoundError("unknown pending id")
         return rec
 
     def assert_agent_owns_pending(self, pending_id: str, agent_id: str) -> None:
-        """Reject with 404 if the pending row is not for this agent (do not leak existence)."""
         try:
             rec = self._require(pending_id)
         except NotFoundError:
@@ -166,10 +237,14 @@ class MemoryPendingStore(PendingRequestStore):
             if now - rec.last_poll_monotonic < _MIN_POLL_INTERVAL:
                 raise SlowDownError()
         rec.last_poll_monotonic = now
+        self._save_rec(rec)
 
     def get_pending(self, pending_id: str, *, for_poll: bool = False) -> PendingStoreValue:
-        rec = self._require(pending_id)
-        self._check_ttl(rec)
+        rec0 = self._require(pending_id)
+        self._check_ttl(rec0)
+        rec = self._load(pending_id)
+        if rec is None:
+            raise NotFoundError("unknown pending id")
         if rec.gone:
             raise PendingGoneError()
         if rec.failure:
@@ -180,10 +255,12 @@ class MemoryPendingStore(PendingRequestStore):
             if rec.delivered:
                 raise NotFoundError("unknown pending id")
             rec.delivered = True
+            self._save_rec(rec)
             return rec.terminal
         if for_poll:
-            self._rate_limit_poll(rec)
-        return self._to_deferred(rec)
+            self._rate_limit_poll(self._require(pending_id))
+            rec = self._load(pending_id) or rec
+        return _deferred(rec, self._interaction_base_url)
 
     def get_interaction_code(self, pending_id: str) -> str:
         return self._require(pending_id).interaction_code
@@ -205,25 +282,7 @@ class MemoryPendingStore(PendingRequestStore):
             resource_token=resource_token,
             justification=justification,
         )
-
-    def _to_deferred(self, rec: PendingRecord) -> DeferredResponse:
-        interaction_url: str | None = None
-        show_code: str | None = None
-        if rec.requirement == RequirementLevel.INTERACTION:
-            interaction_url = f"{self._interaction_base_url}{CONSENT_UI_PATH}"
-            show_code = rec.interaction_code
-        return DeferredResponse(
-            pending_id=rec.pending_id,
-            pending_url=_pending_path(rec.pending_id),
-            retry_after=0,
-            requirement=rec.requirement,
-            interaction_url=interaction_url,
-            code=show_code,
-            clarification=rec.clarification,
-            timeout=rec.timeout,
-            options=rec.options,
-            status=rec.status,
-        )
+        self._save_rec(rec)
 
     def update_pending(
         self,
@@ -246,10 +305,12 @@ class MemoryPendingStore(PendingRequestStore):
             rec.timeout = timeout
         if options is not None:
             rec.options = options
+        self._save_rec(rec)
 
     def set_callback_url(self, pending_id: str, callback_url: str | None) -> None:
         rec = self._require(pending_id)
         rec.callback_url = callback_url
+        self._save_rec(rec)
 
     def resolve_pending(
         self, pending_id: str, result: AuthTokenResponse | Mission | InteractionTerminalResult
@@ -257,60 +318,85 @@ class MemoryPendingStore(PendingRequestStore):
         rec = self._require(pending_id)
         rec.terminal = result
         rec.failure = None
+        self._save_rec(rec)
         self._invalidate_code_for(pending_id)
 
     def fail_pending(self, pending_id: str, error: str) -> None:
         rec = self._require(pending_id)
         rec.failure = error
         rec.terminal = None
+        self._save_rec(rec)
         self._invalidate_code_for(pending_id)
 
     def delete_pending(self, pending_id: str) -> None:
         rec = self._require(pending_id)
         rec.gone = True
         rec.terminal = None
+        self._save_rec(rec)
         self._invalidate_code_for(pending_id)
 
+    def _invalidate_code_for(self, pending_id: str) -> None:
+        self._update_row_meta(pending_id, code_unusable=True)
+
     def lookup_code(self, code: str) -> PendingRecord:
-        pid = self._b.code_index.get(code)
-        if pid is None:
+        with self._session_factory() as s:
+            row = s.execute(
+                select(PsPendingRow).where(
+                    PsPendingRow.interaction_code == code,
+                    PsPendingRow.code_unusable.is_(False),
+                )
+            ).scalars().first()
+        if row is None:
             raise InvalidInteractionCodeError()
-        rec = self._require(pid)
-        # Check TTL; this may mark the row as expired/failed without raising yet.
+        rec = self._row_to_rec(row)
         self._check_ttl(rec)
+        rec2 = self._load(row.pending_id)
+        if rec2 is None:
+            raise InvalidInteractionCodeError()
+        rec = rec2
         if rec.gone or rec.failure or rec.terminal is not None:
-            # Row has terminated — remove stale code entry and reject.
-            self._b.code_index.pop(code, None)
+            with self._session_factory() as s:
+                r2 = s.get(PsPendingRow, rec.pending_id)
+                if r2 is not None:
+                    r2.code_unusable = True
+                    s.commit()
             raise InvalidInteractionCodeError()
         return rec
 
-    def _invalidate_code_for(self, pending_id: str) -> None:
-        """Remove code_index entry when a pending row reaches a terminal state."""
-        rec = self._b.pending.get(pending_id)
-        if rec is not None:
-            self._b.code_index.pop(rec.interaction_code, None)
-
     def get_record(self, pending_id: str) -> PendingRecord:
-        """Implementation helper — pending record including internal fields."""
         return self._require(pending_id)
 
     def list_interaction_pending_for_owner(self, owner_id: str) -> list[PendingRecord]:
-        """Pending rows awaiting user interaction, scoped to legal owner."""
         out: list[PendingRecord] = []
-        for rec in self._b.pending.values():
-            if rec.gone or rec.terminal is not None:
+        with self._session_factory() as s:
+            rows = s.execute(
+                select(PsPendingRow).where(
+                    PsPendingRow.is_open.is_(True),
+                    PsPendingRow.owner_id == owner_id,
+                    PsPendingRow.requirement == RequirementLevel.INTERACTION.value,
+                )
+            ).scalars().all()
+        for row in rows:
+            rec = self._row_to_rec(row)
+            self._check_ttl(rec)
+            rec2 = self._load(row.pending_id)
+            if rec2 is None:
                 continue
-            if rec.requirement != RequirementLevel.INTERACTION:
+            if rec2.gone or rec2.terminal is not None:
                 continue
-            if rec.owner_id != owner_id:
+            if rec2.requirement != RequirementLevel.INTERACTION:
                 continue
-            out.append(rec)
+            if rec2.owner_id != owner_id:
+                continue
+            out.append(rec2)
         return sorted(out, key=lambda r: r.pending_id)
 
     def list_open_pending_for_admin(self) -> list[dict[str, Any]]:
-        """All in-flight pending rows (not gone, not resolved, not failed)."""
+        with self._session_factory() as s:
+            rows = s.execute(select(PsPendingRow).where(PsPendingRow.is_open.is_(True))).scalars().all()
         out: list[dict[str, Any]] = []
-        for rec in self._b.pending.values():
+        for row in rows:
+            rec = self._row_to_rec(row)
             if rec.gone or rec.terminal is not None or rec.failure:
                 continue
             agent_id = ""
@@ -333,7 +419,7 @@ class MemoryPendingStore(PendingRequestStore):
                     "agent_id": agent_id,
                     "owner_id": rec.owner_id,
                     "code": code,
-                    "interaction_url": f"{self.interaction_base_url}{CONSENT_UI_PATH}",
+                    "interaction_url": f"{self._interaction_base_url}{CONSENT_UI_PATH}",
                     "pending_url": _pending_path(rec.pending_id),
                     "justification": rec.token_request.justification if rec.token_request else None,
                     "resource_iss": vclaims.get("iss") if vclaims else None,

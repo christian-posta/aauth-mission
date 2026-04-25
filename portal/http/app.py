@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -39,6 +41,12 @@ from agent_server.exceptions import (
 from agent_server.http.config import AgentServerSettings
 from agent_server.http.errors import aauth_json_error as as_aauth_json_error
 from agent_server.impl import ASContainer, build_memory_as
+from persistence.wiring import (
+    build_engine_and_session_from_url,
+    build_persisted_as,
+    build_persisted_ps,
+    init_db,
+)
 from agent_server.models import VerifiedRequest
 from ps.api.admin_routes import get_mission_route, list_missions_route, patch_mission
 from ps.api.trust_routes import TrustedAgentIn, handle_add_trusted, handle_list_trusted, handle_remove_trusted
@@ -288,40 +296,82 @@ def create_portal_app(
     )
 
     defer_as_jwks = DeferredAgentSelfJWKS()
-    ps: PSContainer = build_memory_ps(
-        public_origin=ps_settings.public_origin,
-        auto_approve_token=ps_settings.auto_approve_token,
-        auto_approve_mission=ps_settings.auto_approve_mission,
-        agent_jwt_stub=ps_settings.agent_jwt_stub,
-        pending_ttl_seconds=ps_settings.pending_ttl_seconds,
-        signing_key_path=ps_settings.signing_key_path,
-        trust_file=ps_settings.trust_file,
-        auth_token_lifetime=ps_settings.auth_token_lifetime,
-        user_id=ps_settings.user_id,
-        insecure_dev=ps_settings.insecure_dev,
-        self_jwks_provider=defer_as_jwks,
+    database_url = (
+        ps_settings.database_url
+        or as_settings.database_url
+        or os.environ.get("AAUTH_DATABASE_URL")
     )
-    container: ASContainer = build_memory_as(
-        issuer=as_settings.issuer,
-        server_domain=as_settings.server_domain,
-        signing_key_path=as_settings.signing_key_path,
-        previous_key_path=as_settings.previous_key_path,
-        agent_token_lifetime=as_settings.agent_token_lifetime,
-        registration_ttl=as_settings.registration_ttl,
-        signature_window=as_settings.signature_window,
-    )
+    db_engine: Any = None
+    if database_url:
+        db_engine, session_factory = build_engine_and_session_from_url(database_url)
+        init_db(db_engine)
+        ps: PSContainer = build_persisted_ps(
+            session_factory,
+            public_origin=ps_settings.public_origin,
+            auto_approve_token=ps_settings.auto_approve_token,
+            auto_approve_mission=ps_settings.auto_approve_mission,
+            agent_jwt_stub=ps_settings.agent_jwt_stub,
+            pending_ttl_seconds=ps_settings.pending_ttl_seconds,
+            signing_key_path=ps_settings.signing_key_path,
+            trust_file=ps_settings.trust_file,
+            auth_token_lifetime=ps_settings.auth_token_lifetime,
+            user_id=ps_settings.user_id,
+            insecure_dev=ps_settings.insecure_dev,
+            self_jwks_provider=defer_as_jwks,
+        )
+        container: ASContainer = build_persisted_as(
+            session_factory,
+            issuer=as_settings.issuer,
+            server_domain=as_settings.server_domain,
+            signing_key_path=as_settings.signing_key_path,
+            previous_key_path=as_settings.previous_key_path,
+            agent_token_lifetime=as_settings.agent_token_lifetime,
+            registration_ttl=as_settings.registration_ttl,
+            signature_window=as_settings.signature_window,
+        )
+    else:
+        ps = build_memory_ps(
+            public_origin=ps_settings.public_origin,
+            auto_approve_token=ps_settings.auto_approve_token,
+            auto_approve_mission=ps_settings.auto_approve_mission,
+            agent_jwt_stub=ps_settings.agent_jwt_stub,
+            pending_ttl_seconds=ps_settings.pending_ttl_seconds,
+            signing_key_path=ps_settings.signing_key_path,
+            trust_file=ps_settings.trust_file,
+            auth_token_lifetime=ps_settings.auth_token_lifetime,
+            user_id=ps_settings.user_id,
+            insecure_dev=ps_settings.insecure_dev,
+            self_jwks_provider=defer_as_jwks,
+        )
+        container = build_memory_as(
+            issuer=as_settings.issuer,
+            server_domain=as_settings.server_domain,
+            signing_key_path=as_settings.signing_key_path,
+            previous_key_path=as_settings.previous_key_path,
+            agent_token_lifetime=as_settings.agent_token_lifetime,
+            registration_ttl=as_settings.registration_ttl,
+            signature_window=as_settings.signature_window,
+        )
     defer_as_jwks.set(container.signing.get_jwks)
+
+    @asynccontextmanager
+    async def _portal_lifespan(_app: FastAPI) -> Any:
+        yield
+        if db_engine is not None:
+            db_engine.dispose()
 
     app = FastAPI(
         title="AAuth Person Portal",
         version="0.1.0",
         description="Unified Person Server + Agent Server (single origin).",
+        lifespan=_portal_lifespan,
     )
     app.state.settings = ps_settings
     app.state.ps_settings = ps_settings
     app.state.as_settings = as_settings
     app.state.ps = ps
     app.state.container = container
+    app.state.db_engine = db_engine
 
     meta_ps = ps_settings.metadata()
     meta_as = as_settings.metadata()

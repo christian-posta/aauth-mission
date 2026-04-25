@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Union
 
 from agent_server.impl.memory_bindings import MemoryBindingStore
-from agent_server.impl.memory_registrations import MemoryPendingRegistrationStore
 from agent_server.impl.memory_replay import ReplayCache
+from agent_server.impl.memory_registrations import MemoryPendingRegistrationStore
 from agent_server.service.signing import SigningService
 from agent_server.service.token_factory import AgentTokenFactory
 
 
 @dataclass
 class ASContainer:
-    registrations: MemoryPendingRegistrationStore
-    bindings: MemoryBindingStore
+    registrations: Union[MemoryPendingRegistrationStore, "SQLPendingRegistrationStore"]
+    bindings: Union[MemoryBindingStore, "SQLBindingStore"]
     replay: ReplayCache
     signing: SigningService
     token_factory: AgentTokenFactory

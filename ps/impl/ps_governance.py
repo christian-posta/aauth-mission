@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from ps.impl.backend import PSBackend, utc_now
+from typing import Union
+
+from ps.impl.backend import utc_now
+from ps.impl.mission_state import MissionStatePort
 from ps.impl.memory_pending import MemoryPendingStore
 from ps.impl.mission_guards import require_active_mission
 from ps.models import (
@@ -20,15 +23,21 @@ from ps.models import (
 class PsGovernance:
     """In-memory PS governance endpoints."""
 
-    def __init__(self, backend: PSBackend, store: MemoryPendingStore, *, ps_issuer: str) -> None:
-        self._b = backend
+    def __init__(
+        self,
+        mission: MissionStatePort,
+        store: Union[MemoryPendingStore, "DatabasePendingStore"],
+        *,
+        ps_issuer: str,
+    ) -> None:
+        self._m = mission
         self._store = store
         self._ps_issuer = ps_issuer.rstrip("/")
 
     def post_permission(self, req: PermissionRequest) -> PermissionOutcome:
         if req.mission is not None:
-            m = require_active_mission(self._b, req.mission)
-            self._b.append_mission_log(
+            m = require_active_mission(self._m, req.mission)
+            self._m.append_mission_log(
                 m.s256,
                 MissionLogEntry(
                     ts=utc_now(),
@@ -44,8 +53,8 @@ class PsGovernance:
         return PermissionOutcome(permission="granted")
 
     def post_audit(self, req: AuditRequest) -> None:
-        m = require_active_mission(self._b, req.mission)
-        self._b.append_mission_log(
+        m = require_active_mission(self._m, req.mission)
+        self._m.append_mission_log(
             m.s256,
             MissionLogEntry(
                 ts=utc_now(),
@@ -63,10 +72,10 @@ class PsGovernance:
         mission_s256: str | None = None
         owner_id: str | None = None
         if req.mission is not None:
-            m = require_active_mission(self._b, req.mission)
+            m = require_active_mission(self._m, req.mission)
             mission_s256 = m.s256
             owner_id = m.owner_id
-            self._b.append_mission_log(
+            self._m.append_mission_log(
                 m.s256,
                 MissionLogEntry(
                     ts=utc_now(),

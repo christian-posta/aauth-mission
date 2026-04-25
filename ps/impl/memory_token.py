@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Union
 from typing import Any
 
 import aauth
@@ -13,7 +14,8 @@ from aauth import errors as aauth_errors
 from ps.exceptions import ClarificationLimitError, NotFoundError, ResourceTokenRejectError
 from ps.federation.as_federator import ASFederator
 from ps.federation.agent_server_trust import normalize_issuer
-from ps.impl.backend import PSBackend, utc_now
+from ps.impl.backend import utc_now
+from ps.impl.mission_state import MissionStatePort
 from ps.impl.memory_pending import MemoryPendingStore
 from ps.impl.mission_guards import require_active_mission
 from ps.models import (
@@ -49,9 +51,9 @@ def _resource_scope_requires_user_consent(scope: object) -> bool:
 class MemoryTokenBroker(TokenBroker):
     def __init__(
         self,
-        store: MemoryPendingStore,
+        store: Union[MemoryPendingStore, "DatabasePendingStore"],
         federator: ASFederator,
-        backend: PSBackend,
+        mission: MissionStatePort,
         *,
         ps_origin: str,
         auth_issuer: AuthTokenIssuer,
@@ -62,7 +64,7 @@ class MemoryTokenBroker(TokenBroker):
     ) -> None:
         self._store = store
         self._federator = federator
-        self._b = backend
+        self._m = mission
         self._ps_origin = normalize_issuer(ps_origin)
         self._auth_issuer = auth_issuer
         self._resource_jwks = resource_jwks
@@ -101,7 +103,7 @@ class MemoryTokenBroker(TokenBroker):
 
     def request_token(self, request: TokenRequest) -> TokenOutcome:
         if request.mission is not None:
-            require_active_mission(self._b, request.mission)
+            require_active_mission(self._m, request.mission)
 
         if not request.secure_mode:
             if self._auto:
@@ -161,7 +163,7 @@ class MemoryTokenBroker(TokenBroker):
         rec.clarification_responses.append(response_text)
         rec.clarification_round += 1
         if rec.token_request and rec.token_request.mission:
-            self._b.append_mission_log(
+            self._m.append_mission_log(
                 rec.token_request.mission.s256,
                 MissionLogEntry(
                     ts=utc_now(),

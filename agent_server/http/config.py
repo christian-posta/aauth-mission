@@ -64,6 +64,10 @@ class AgentServerSettings(BaseSettings):
         default="changeme",
         description="Bearer token for /person/* endpoints.",
     )
+    database_url: str | None = Field(
+        default=None,
+        description="If set, persist Agent Server registrations/bindings to this URL (shared with Person Server in Portal).",
+    )
     insecure_dev: bool = Field(
         default=False,
         description="If true, skip HTTP signature verification (dev only).",

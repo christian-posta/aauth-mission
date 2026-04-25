@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Union
 
 from ps.api.admin_routes import patch_mission
 from ps.exceptions import ForbiddenOwnerError, NotFoundError
@@ -35,7 +35,9 @@ def patch_user_mission_route(
     return patch_mission(control, s256, new_state)
 
 
-def user_consent_queue(store: MemoryPendingStore, owner_id: str) -> list[dict[str, Any]]:
+def user_consent_queue(
+    store: Union[MemoryPendingStore, "DatabasePendingStore"], owner_id: str
+) -> list[dict[str, Any]]:
     """GET `/user/consent` — pending interaction rows for this owner."""
     recs = store.list_interaction_pending_for_owner(owner_id)
     interaction_url = f"{store.interaction_base_url}{CONSENT_UI_PATH}"

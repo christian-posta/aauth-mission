@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 from ps.models import (
     AuthTokenResponse,
@@ -66,6 +66,21 @@ class PSBackend:
     mission_log: dict[str, list[MissionLogEntry]] = field(default_factory=dict)
     pending: dict[str, PendingRecord] = field(default_factory=dict)
     code_index: dict[str, str] = field(default_factory=dict)  # interaction code -> pending_id
+
+    def get_mission(self, s256: str) -> Mission | None:
+        return self.missions.get(s256)
+
+    def set_mission(self, m: Mission) -> None:
+        self.missions[m.s256] = m
+
+    def has_mission(self, s256: str) -> bool:
+        return s256 in self.missions
+
+    def iter_missions(self) -> Iterator[Mission]:
+        return iter(self.missions.values())
+
+    def get_mission_log(self, s256: str) -> list[MissionLogEntry]:
+        return list(self.mission_log.get(s256, []))
 
     def append_mission_log(self, s256: str, entry: MissionLogEntry) -> None:
         self.mission_log.setdefault(s256, []).append(entry)
