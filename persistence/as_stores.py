@@ -63,21 +63,27 @@ class SQLPendingRegistrationStore:
             row = s.get(AsPendingRegistrationRow, pending_id)
             if row is None:
                 return None
-            if row.status == "pending" and now >= row.expires_at:
+            expires_at = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
+            if row.status == "pending" and now >= expires_at:
                 row.status = "denied"
             s.commit()
             return self._row_to_reg(row)
 
     @staticmethod
     def _row_to_reg(row: AsPendingRegistrationRow) -> PendingRegistration:
+        def _as_utc(dt: datetime) -> datetime:
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+
         return PendingRegistration(
             id=row.id,
             stable_pub=dict(row.stable_pub) if isinstance(row.stable_pub, dict) else {},
             ephemeral_pub=dict(row.ephemeral_pub) if isinstance(row.ephemeral_pub, dict) else {},
             agent_name=row.agent_name,
             stable_jkt=row.stable_jkt,
-            created_at=row.created_at,
-            expires_at=row.expires_at,
+            created_at=_as_utc(row.created_at),
+            expires_at=_as_utc(row.expires_at),
             status=row.status,  # type: ignore[assignment,arg-type]
         )
 
