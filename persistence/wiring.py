@@ -13,6 +13,7 @@ from agent_server.service.token_factory import AgentTokenFactory
 from agent_server.impl.memory_replay import ReplayCache
 from persistence.as_stores import SQLBindingStore, SQLPendingRegistrationStore
 from persistence.engine import make_engine, create_session_factory
+from persistence.sql_issued import DatabaseIssuedTokenStore
 from persistence.sql_mission import SqlMissionState
 from persistence.sql_pending import DatabasePendingStore
 from persistence.trust_db import DatabaseAgentServerTrustRegistry, import_trust_from_file_if_empty
@@ -70,11 +71,13 @@ def build_persisted_ps(
     else:
         resource_resolver = resource_jwks
     agent_resolver = AgentServerJWKSResolver(origin, trust, self_jwks_provider)
+    issued_store = DatabaseIssuedTokenStore(session_factory)
     auth_issuer = AuthTokenIssuer(
         origin,
         ps_signing,
         user_sub=user_id,
         auth_token_lifetime_seconds=auth_token_lifetime,
+        issued_token_store=issued_store,
     )
     governance = PsGovernance(mission, store, ps_issuer=origin)  # type: ignore[arg-type]
     lifecycle = MemoryMissionLifecycle(
@@ -117,6 +120,7 @@ def build_persisted_ps(
         agent_jwks_resolver=agent_resolver,
         resource_jwks_resolver=resource_resolver,
         auth_issuer=auth_issuer,
+        issued_token_store=issued_store,
     )
 
 

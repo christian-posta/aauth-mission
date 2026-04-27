@@ -15,11 +15,13 @@ from ps.impl.mission_state import MissionStatePort
 from ps.impl.fake_federator import FakeASFederator
 from ps.impl.memory_consent import MemoryUserConsent
 from ps.impl.memory_control import MemoryMissionControl
+from ps.impl.memory_issued import MemoryIssuedTokenStore
 from ps.impl.memory_lifecycle import MemoryMissionLifecycle
 from ps.impl.memory_pending import MemoryPendingStore
 from ps.impl.memory_token import MemoryTokenBroker
 from ps.impl.ps_governance import PsGovernance
 from ps.service.auth_issuer import AuthTokenIssuer
+from ps.service.issued_token_store import IssuedTokenStore
 from ps.service.mission_control import MissionControl
 from ps.service.mission_lifecycle import MissionLifecycle
 from ps.service.signing import PSSigningService
@@ -44,6 +46,7 @@ class PSContainer:
     agent_jwks_resolver: AgentServerJWKSResolver
     resource_jwks_resolver: ResourceJWKSResolver
     auth_issuer: AuthTokenIssuer
+    issued_token_store: IssuedTokenStore
 
 
 def build_memory_ps(
@@ -77,11 +80,13 @@ def build_memory_ps(
     else:
         resource_resolver = resource_jwks
     agent_resolver = AgentServerJWKSResolver(origin, trust, self_jwks_provider)
+    issued_store = MemoryIssuedTokenStore()
     auth_issuer = AuthTokenIssuer(
         origin,
         ps_signing,
         user_sub=user_id,
         auth_token_lifetime_seconds=auth_token_lifetime,
+        issued_token_store=issued_store,
     )
     governance = PsGovernance(backend, store, ps_issuer=origin)
     lifecycle = MemoryMissionLifecycle(
@@ -124,4 +129,5 @@ def build_memory_ps(
         agent_jwks_resolver=agent_resolver,
         resource_jwks_resolver=resource_resolver,
         auth_issuer=auth_issuer,
+        issued_token_store=issued_store,
     )

@@ -163,6 +163,8 @@ class MemoryUserConsent(UserConsent):
                         agent_cnf_jwk=dict(cnf),
                         resource_claims=claims,
                         mission=tr.mission,
+                        justification=tr.justification,
+                        issue_method="user_consent",
                     )
                 else:
                     auth = self._federator.request_auth_token(

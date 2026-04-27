@@ -368,6 +368,56 @@
         </div>
         <p x-show="!pendingLoading && pending.length === 0" class="mt-4 text-sm text-zinc-500">No open pending requests.</p>
       </div>
+
+      <!-- Issued tokens tab -->
+      <div x-show="tab === 'issued'">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Issued tokens</h2>
+            <p class="mt-0.5 text-xs text-zinc-600">Audit log of all auth tokens issued — autonomous and user-approved</p>
+          </div>
+          <button type="button" @click="loadIssued()" class="rounded-lg border border-zinc-600 px-3 py-1.5 text-sm hover:bg-zinc-800">Refresh</button>
+        </div>
+        <p x-show="issuedError" class="mt-4 text-sm text-red-400" x-text="issuedError"></p>
+        <div x-show="issuedLoading" class="mt-4 text-zinc-500">Loading…</div>
+        <div class="mt-4 overflow-x-auto rounded-xl border border-zinc-800">
+          <table class="w-full min-w-[960px] text-left text-sm">
+            <thead class="border-b border-zinc-800 bg-zinc-900 text-xs uppercase text-zinc-500">
+              <tr>
+                <th class="px-4 py-3">Agent</th>
+                <th class="px-4 py-3">Method</th>
+                <th class="px-4 py-3">Resource</th>
+                <th class="px-4 py-3">Scope</th>
+                <th class="px-4 py-3">Owner</th>
+                <th class="px-4 py-3">Justification</th>
+                <th class="px-4 py-3">Issued at</th>
+                <th class="px-4 py-3">Expires at</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-800">
+              <template x-for="row in issued" :key="row.issued_id">
+                <tr class="hover:bg-zinc-900/80">
+                  <td class="px-4 py-3 font-mono text-xs text-zinc-300" x-text="row.agent_id || '—'"></td>
+                  <td class="px-4 py-3">
+                    <span
+                      class="rounded px-2 py-0.5 text-xs"
+                      :class="row.issue_method === 'autonomous' ? 'bg-sky-900 text-sky-300' : 'bg-emerald-900 text-emerald-300'"
+                      x-text="row.issue_method"
+                    ></span>
+                  </td>
+                  <td class="px-4 py-3 text-xs text-zinc-400" x-text="row.resource_iss || '—'"></td>
+                  <td class="px-4 py-3 text-xs text-zinc-500" x-text="row.resource_scope || '—'"></td>
+                  <td class="px-4 py-3 text-xs text-zinc-500" x-text="row.owner_id || '—'"></td>
+                  <td class="px-4 py-3 text-xs text-zinc-500 max-w-[180px] truncate" :title="row.justification || ''" x-text="row.justification || '—'"></td>
+                  <td class="px-4 py-3 text-xs text-zinc-500" x-text="row.issued_at ? new Date(row.issued_at).toLocaleString() : '—'"></td>
+                  <td class="px-4 py-3 text-xs" :class="expiryClass(row.expires_at)" x-text="row.expires_at ? new Date(row.expires_at).toLocaleString() : '—'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        <p x-show="!issuedLoading && issued.length === 0" class="mt-4 text-sm text-zinc-500">No tokens issued yet.</p>
+      </div>
     </main>
 
     <!-- Deny registration modal -->
@@ -715,6 +765,7 @@
             { id: "agents", label: "Agents" },
             { id: "missions", label: "Missions" },
             { id: "tokens", label: "Token requests" },
+            { id: "issued", label: "Issued tokens" },
           ],
           regs: [],
           regsLoading: true,
@@ -739,6 +790,9 @@
           pending: [],
           pendingLoading: true,
           pendingError: "",
+          issued: [],
+          issuedLoading: false,
+          issuedError: "",
           trusted: [],
           trustedLoading: false,
           trustedError: "",
@@ -786,6 +840,7 @@
             if (this.tab === "missions" && this.missions.length === 0 && !this.missionsLoading) this.loadMissions();
             if (this.tab === "tokens") this.loadPending();
             if (this.tab === "agents") this.loadTrusted();
+            if (this.tab === "issued") this.loadIssued();
           },
           signOut() {
             PortalAuth.clear();
@@ -1188,6 +1243,18 @@
               this.pendingError = e.message || String(e);
             } finally {
               this.pendingLoading = false;
+            }
+          },
+
+          async loadIssued() {
+            this.issuedLoading = true;
+            this.issuedError = "";
+            try {
+              this.issued = await PortalApi.fetchJson("/admin/issued-tokens");
+            } catch (e) {
+              this.issuedError = e.message || String(e);
+            } finally {
+              this.issuedLoading = false;
             }
           },
         };

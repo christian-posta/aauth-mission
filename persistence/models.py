@@ -64,6 +64,23 @@ class PsPendingRow(Base):
     )
 
 
+class PsIssuedTokenRow(Base):
+    __tablename__ = "ps_issued_token"
+
+    issued_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    owner_id: Mapped[str | None] = mapped_column(String(256), nullable=True, index=True)
+    resource_iss: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    resource_scope: Mapped[str | None] = mapped_column(Text, nullable=True)
+    justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    issue_method: Mapped[str] = mapped_column(String(32), nullable=False)  # "autonomous" | "user_consent"
+    token_jti: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PsTrustedAgentServerRow(Base):
     __tablename__ = "ps_trusted_agent_server"
 

@@ -822,6 +822,10 @@ def create_portal_app(
     def admin_list_pending(_admin: Annotated[None, Depends(require_portal_admin)]) -> list[dict[str, Any]]:
         return ps.pending_store.list_open_pending_for_admin()
 
+    @app.get("/admin/issued-tokens")
+    def admin_list_issued_tokens(_admin: Annotated[None, Depends(require_portal_admin)]) -> list[dict[str, Any]]:
+        return ps.issued_token_store.list_issued()
+
     @app.get("/person/trusted-agent-servers")
     def list_trusted_agent_servers_portal(
         _admin: Annotated[None, Depends(require_portal_admin)],

@@ -99,6 +99,8 @@ class MemoryTokenBroker(TokenBroker):
             agent_cnf_jwk=request.agent_cnf_jwk,
             resource_claims=resource_claims,
             mission=request.mission,
+            justification=request.justification,
+            issue_method="autonomous",
         )
 
     def request_token(self, request: TokenRequest) -> TokenOutcome:
