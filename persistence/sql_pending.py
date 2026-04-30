@@ -26,7 +26,7 @@ from ps.exceptions import (
     SlowDownError,
 )
 from ps.impl.backend import PendingRecord, utc_now
-from ps.impl.memory_pending import CONSENT_UI_PATH, _pending_path
+from ps.impl.memory_pending import CONSENT_UI_PATH, _pending_path, _DEFAULT_DEFERRED_RETRY_AFTER
 from ps.impl.mission_state import MissionStatePort
 from ps.models import (
     AuthTokenResponse,
@@ -53,8 +53,8 @@ def _deferred(
         show_code = rec.interaction_code
     return DeferredResponse(
         pending_id=rec.pending_id,
-        pending_url=_pending_path(rec.pending_id),
-        retry_after=0,
+        pending_url=_pending_path(rec.pending_id, interaction_base_url),
+        retry_after=_DEFAULT_DEFERRED_RETRY_AFTER,
         requirement=rec.requirement,
         interaction_url=interaction_url,
         code=show_code,
@@ -420,7 +420,7 @@ class DatabasePendingStore(PendingRequestStore):
                     "owner_id": rec.owner_id,
                     "code": code,
                     "interaction_url": f"{self._interaction_base_url}{CONSENT_UI_PATH}",
-                    "pending_url": _pending_path(rec.pending_id),
+                    "pending_url": _pending_path(rec.pending_id, self._interaction_base_url),
                     "justification": rec.token_request.justification if rec.token_request else None,
                     "resource_iss": vclaims.get("iss") if vclaims else None,
                     "resource_scope": vclaims.get("scope") if vclaims else None,

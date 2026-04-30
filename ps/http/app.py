@@ -239,6 +239,7 @@ def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContai
             pending_ttl_seconds=settings.pending_ttl_seconds,
             signing_key_path=settings.signing_key_path,
             trust_file=settings.trust_file,
+            consent_scopes_file=settings.consent_scopes_file,
             auth_token_lifetime=settings.auth_token_lifetime,
             user_id=settings.user_id,
             insecure_dev=settings.insecure_dev,
@@ -253,6 +254,7 @@ def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContai
             pending_ttl_seconds=settings.pending_ttl_seconds,
             signing_key_path=settings.signing_key_path,
             trust_file=settings.trust_file,
+            consent_scopes_file=settings.consent_scopes_file,
             auth_token_lifetime=settings.auth_token_lifetime,
             user_id=settings.user_id,
             insecure_dev=settings.insecure_dev,
@@ -663,6 +665,36 @@ def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContai
     @app.get("/admin/pending")
     def admin_list_pending(_admin: Annotated[None, Depends(require_admin)]) -> list[dict[str, Any]]:
         return ps.pending_store.list_open_pending_for_admin()
+
+    @app.get("/admin/consent-scopes")
+    def get_consent_scopes(_admin: Annotated[None, Depends(require_admin)]) -> dict[str, Any]:
+        return {"scopes": ps.consent_scopes.get_scopes()}
+
+    @app.post("/admin/consent-scopes", status_code=201)
+    def add_consent_scope(
+        body: dict[str, str],
+        _admin: Annotated[None, Depends(require_admin)],
+    ) -> dict[str, Any]:
+        scope = body.get("scope", "").strip()
+        if not scope:
+            raise HTTPException(status_code=400, detail="scope field required and must be non-empty")
+        try:
+            added = ps.consent_scopes.add_scope(scope)
+            if not added:
+                raise HTTPException(status_code=409, detail=f"Scope '{scope}' already exists")
+            return {"scope": scope, "added": True}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.delete("/admin/consent-scopes/{scope}", status_code=204)
+    def remove_consent_scope(
+        scope: str,
+        _admin: Annotated[None, Depends(require_admin)],
+    ) -> Response:
+        removed = ps.consent_scopes.remove_scope(scope)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"Scope '{scope}' not found")
+        return Response(status_code=204)
 
     @app.get("/person/trusted-agent-servers")
     def list_trusted_agent_servers(

@@ -21,6 +21,7 @@ from ps.impl.memory_pending import MemoryPendingStore
 from ps.impl.memory_token import MemoryTokenBroker
 from ps.impl.ps_governance import PsGovernance
 from ps.service.auth_issuer import AuthTokenIssuer
+from ps.service.consent_scopes import ConsentScopeStore
 from ps.service.issued_token_store import IssuedTokenStore
 from ps.service.mission_control import MissionControl
 from ps.service.mission_lifecycle import MissionLifecycle
@@ -47,6 +48,7 @@ class PSContainer:
     resource_jwks_resolver: ResourceJWKSResolver
     auth_issuer: AuthTokenIssuer
     issued_token_store: IssuedTokenStore
+    consent_scopes: ConsentScopeStore
 
 
 def build_memory_ps(
@@ -58,6 +60,7 @@ def build_memory_ps(
     pending_ttl_seconds: int = 600,
     signing_key_path: str | None = ".aauth/ps-signing-key.pem",
     trust_file: str | None = ".aauth/ps-trusted-agents.json",
+    consent_scopes_file: str | None = ".aauth/consent-scopes.json",
     auth_token_lifetime: int = 3600,
     user_id: str = "user",
     insecure_dev: bool = False,
@@ -75,6 +78,7 @@ def build_memory_ps(
     federator = FakeASFederator()
     ps_signing = PSSigningService(signing_key_path)
     trust = MemoryAgentServerTrustRegistry(trust_file)
+    consent_scopes = ConsentScopeStore(consent_scopes_file)
     if resource_jwks is None:
         resource_resolver: ResourceJWKSFetcher = ResourceJWKSResolver()
     else:
@@ -102,6 +106,7 @@ def build_memory_ps(
         ps_origin=origin,
         auth_issuer=auth_issuer,
         resource_jwks=resource_resolver,
+        consent_scopes=consent_scopes,
         agent_jwt_stub=agent_jwt_stub,
         auto_approve_without_consent=auto_approve_token,
         insecure_dev=insecure_dev,
@@ -113,6 +118,7 @@ def build_memory_ps(
         auth_issuer,
         agent_jwt_stub=agent_jwt_stub,
         ps_issuer=origin,
+        resource_jwks=resource_resolver,
     )
     control = MemoryMissionControl(backend)
     return PSContainer(
@@ -130,4 +136,5 @@ def build_memory_ps(
         resource_jwks_resolver=resource_resolver,
         auth_issuer=auth_issuer,
         issued_token_store=issued_store,
+        consent_scopes=consent_scopes,
     )

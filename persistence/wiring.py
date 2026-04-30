@@ -28,6 +28,7 @@ from ps.impl.memory_lifecycle import MemoryMissionLifecycle
 from ps.impl.memory_token import MemoryTokenBroker
 from ps.impl.ps_governance import PsGovernance
 from ps.service.auth_issuer import AuthTokenIssuer
+from ps.service.consent_scopes import ConsentScopeStore
 from ps.service.signing import PSSigningService
 
 from persistence.base import Base
@@ -48,6 +49,7 @@ def build_persisted_ps(
     pending_ttl_seconds: int = 600,
     signing_key_path: str | None = ".aauth/ps-signing-key.pem",
     trust_file: str | None = ".aauth/ps-trusted-agents.json",
+    consent_scopes_file: str | None = ".aauth/consent-scopes.json",
     auth_token_lifetime: int = 3600,
     user_id: str = "user",
     insecure_dev: bool = False,
@@ -66,6 +68,7 @@ def build_persisted_ps(
     federator: ASFederator = FakeASFederator()
     ps_signing = PSSigningService(signing_key_path)
     trust = DatabaseAgentServerTrustRegistry(session_factory)
+    consent_scopes = ConsentScopeStore(consent_scopes_file)
     if resource_jwks is None:
         resource_resolver: ResourceJWKSFetcher = ResourceJWKSResolver()
     else:
@@ -93,6 +96,7 @@ def build_persisted_ps(
         ps_origin=origin,
         auth_issuer=auth_issuer,
         resource_jwks=resource_resolver,
+        consent_scopes=consent_scopes,
         agent_jwt_stub=agent_jwt_stub,
         auto_approve_without_consent=auto_approve_token,
         insecure_dev=insecure_dev,
@@ -104,6 +108,7 @@ def build_persisted_ps(
         auth_issuer,
         agent_jwt_stub=agent_jwt_stub,
         ps_issuer=origin,
+        resource_jwks=resource_resolver,
     )
     control = MemoryMissionControl(mission)
     return PSContainer(
@@ -121,6 +126,7 @@ def build_persisted_ps(
         resource_jwks_resolver=resource_resolver,
         auth_issuer=auth_issuer,
         issued_token_store=issued_store,
+        consent_scopes=consent_scopes,
     )
 
 

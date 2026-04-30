@@ -7,10 +7,48 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 def normalize_issuer(url: str) -> str:
     return url.rstrip("/")
+
+
+def normalize_aud_claim(raw: Any) -> str:
+    """Single string ``aud`` value from JWT claims (``aud`` may be a string or list per JWT)."""
+    if raw is None:
+        return ""
+    if isinstance(raw, (list, tuple)):
+        if not raw:
+            return ""
+        raw = raw[0]
+    return normalize_issuer(str(raw).strip())
+
+
+def issuer_urls_equivalent(a: str, b: str) -> bool:
+    """Return True if ``a`` and ``b`` denote the same logical HTTP origin (scheme, host, port).
+
+    Handles ``localhost`` vs ``127.0.0.1`` and avoids mis-comparing JWT ``aud`` when PyJWT
+    returns a one-element list (``str(list)`` must never be used as a URL).
+    """
+    if not a or not b:
+        return False
+
+    def origin_tuple(url: str) -> tuple[str, str, int]:
+        u = normalize_issuer(url.strip())
+        if "://" not in u:
+            u = f"http://{u}"
+        p = urlparse(u)
+        scheme = (p.scheme or "http").lower()
+        host = (p.hostname or "").lower()
+        if host in ("localhost", "::1", "[::1]"):
+            host = "127.0.0.1"
+        port = p.port
+        if port is None:
+            port = 443 if scheme == "https" else 80
+        return (scheme, host, port)
+
+    return origin_tuple(a) == origin_tuple(b)
 
 
 @dataclass(frozen=True, slots=True)

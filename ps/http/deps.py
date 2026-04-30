@@ -63,6 +63,26 @@ async def require_agent_id(
     target_uri = str(request.url)
     hdrs = {k: v for k, v in request.headers.items()}
 
+    parsed = aauth.parse_signature_key(sig_key)
+    scheme = parsed.get("scheme")
+
+    # Deferred polling (GET /pending/...) uses the same HTTPSig profile as POST /token:
+    # aa-agent+jwt in Signature-Key (scheme=jwt), which requires JWKS resolution.
+    if scheme == "jwt":
+        ps = cast(Any, request.app.state.ps)
+        try:
+            va = verify_agent_jwt_request(
+                method=request.method,
+                target_uri=target_uri,
+                headers=hdrs,
+                body=body,
+                jwks_fetcher=ps.agent_jwks_resolver,
+                insecure_dev=False,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        return va.agent_id
+
     ok = aauth.verify_signature(
         method=request.method,
         target_uri=target_uri,
@@ -75,17 +95,10 @@ async def require_agent_id(
     if not ok:
         raise HTTPException(status_code=401, detail="HTTP signature verification failed")
 
-    parsed = aauth.parse_signature_key(sig_key)
-    scheme = parsed.get("scheme")
-    if scheme == "jwt":
-        raise HTTPException(
-            status_code=401,
-            detail="Signature-Key scheme=jwt is not valid for this endpoint; use scheme=hwk",
-        )
     if scheme != "hwk":
         raise HTTPException(
             status_code=401,
-            detail=f"Signature-Key must use scheme=hwk for this Person Server (got {scheme!r})",
+            detail=f"Signature-Key must use scheme=hwk or scheme=jwt for this Person Server (got {scheme!r})",
         )
     return _hwk_thumbprint_from_parsed(parsed)
 

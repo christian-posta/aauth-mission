@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
-from typing import Union
+from typing import Any, Union
+
+import aauth
+from aauth import TokenError as AAuthTokenError
 
 from ps.exceptions import NotFoundError
 from ps.federation.as_federator import ASFederator
-from ps.federation.agent_server_trust import normalize_issuer
+from ps.federation.agent_server_trust import (
+    issuer_urls_equivalent,
+    normalize_aud_claim,
+    normalize_issuer,
+)
 from ps.impl.backend import utc_now
 from ps.impl.mission_state import MissionStatePort
 from ps.impl.memory_pending import MemoryPendingStore
@@ -26,8 +34,11 @@ from ps.models import (
     RequirementLevel,
     UserDecision,
 )
+from ps.federation.resource_jwks import ResourceJWKSFetcher
 from ps.service.auth_issuer import AuthTokenIssuer
 from ps.service.user_consent import UserConsent
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryUserConsent(UserConsent):
@@ -40,6 +51,7 @@ class MemoryUserConsent(UserConsent):
         *,
         agent_jwt_stub: str,
         ps_issuer: str,
+        resource_jwks: ResourceJWKSFetcher | None = None,
     ) -> None:
         self._m = mission
         self._store = store
@@ -47,6 +59,27 @@ class MemoryUserConsent(UserConsent):
         self._auth_issuer = auth_issuer
         self._agent_jwt_stub = agent_jwt_stub
         self._ps_issuer = ps_issuer.rstrip("/")
+        self._resource_jwks = resource_jwks
+
+    def _resolved_resource_claims(self, rec: Any, tr: Any) -> dict[str, Any] | None:
+        """Prefer a fresh verify of ``resource_token`` so ``aud`` / claims match JWT reality."""
+        if not tr.secure_mode:
+            return None
+        if self._resource_jwks is not None:
+            try:
+                return aauth.verify_resource_token(
+                    tr.resource_token,
+                    self._resource_jwks,
+                    expected_aud=None,
+                    expected_agent=tr.agent_id,
+                    expected_agent_jkt=tr.agent_jkt,
+                )
+            except AAuthTokenError as e:
+                logger.info(
+                    "consent: re-verify resource_token failed (%s), using stored claims if any",
+                    e,
+                )
+        return rec.verified_resource_claims
 
     def _record_mission(self, m: Mission) -> None:
         self._m.set_mission(m)
@@ -152,12 +185,12 @@ class MemoryUserConsent(UserConsent):
 
         if rec.kind == "token" and rec.token_request is not None:
             tr = rec.token_request
-            claims = rec.verified_resource_claims
+            claims = self._resolved_resource_claims(rec, tr)
             if tr.secure_mode and claims:
-                aud = normalize_issuer(str(claims.get("aud", "")))
+                aud = normalize_aud_claim(claims.get("aud"))
                 psn = normalize_issuer(self._ps_issuer)
                 cnf = rec.token_agent_cnf_jwk or tr.agent_cnf_jwk
-                if aud == psn and cnf is not None:
+                if issuer_urls_equivalent(aud, psn) and cnf:
                     auth = self._auth_issuer.issue(
                         agent_id=tr.agent_id,
                         agent_cnf_jwk=dict(cnf),
@@ -167,6 +200,12 @@ class MemoryUserConsent(UserConsent):
                         issue_method="user_consent",
                     )
                 else:
+                    logger.warning(
+                        "consent: falling back to fake auth token (aud=%r ps=%r has_cnf=%s)",
+                        aud,
+                        psn,
+                        bool(cnf),
+                    )
                     auth = self._federator.request_auth_token(
                         tr.resource_token,
                         self._agent_jwt_stub,

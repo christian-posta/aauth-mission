@@ -13,7 +13,11 @@ from aauth import errors as aauth_errors
 
 from ps.exceptions import ClarificationLimitError, NotFoundError, ResourceTokenRejectError
 from ps.federation.as_federator import ASFederator
-from ps.federation.agent_server_trust import normalize_issuer
+from ps.federation.agent_server_trust import (
+    issuer_urls_equivalent,
+    normalize_aud_claim,
+    normalize_issuer,
+)
 from ps.impl.backend import utc_now
 from ps.impl.mission_state import MissionStatePort
 from ps.impl.memory_pending import MemoryPendingStore
@@ -31,21 +35,13 @@ from ps.models import (
     TokenRequest,
 )
 from ps.service.auth_issuer import AuthTokenIssuer
+from ps.service.consent_scopes import ConsentScopeStore
 from ps.service.token_broker import TokenBroker
 from ps.federation.resource_jwks import ResourceJWKSFetcher
 
 logger = logging.getLogger(__name__)
 
 _MAX_CLARIFICATION_ROUNDS = 5
-
-# Demo policy: defer to user consent only when the verified resource token scope lists this.
-_SCOPE_REQUIRE_USER = "require:user"
-
-
-def _resource_scope_requires_user_consent(scope: object) -> bool:
-    if not scope or not isinstance(scope, str):
-        return False
-    return _SCOPE_REQUIRE_USER in scope.split()
 
 
 class MemoryTokenBroker(TokenBroker):
@@ -58,6 +54,7 @@ class MemoryTokenBroker(TokenBroker):
         ps_origin: str,
         auth_issuer: AuthTokenIssuer,
         resource_jwks: ResourceJWKSFetcher,
+        consent_scopes: ConsentScopeStore,
         agent_jwt_stub: str,
         auto_approve_without_consent: bool = False,
         insecure_dev: bool = False,
@@ -68,6 +65,7 @@ class MemoryTokenBroker(TokenBroker):
         self._ps_origin = normalize_issuer(ps_origin)
         self._auth_issuer = auth_issuer
         self._resource_jwks = resource_jwks
+        self._consent_scopes = consent_scopes
         self._agent_jwt_stub = agent_jwt_stub
         self._auto = auto_approve_without_consent
         self._insecure_dev = insecure_dev
@@ -85,8 +83,8 @@ class MemoryTokenBroker(TokenBroker):
                 self._agent_jwt_stub,
                 request.upstream_token,
             )
-        aud = normalize_issuer(str(resource_claims.get("aud", "")))
-        if aud != self._ps_origin:
+        aud = normalize_aud_claim(resource_claims.get("aud"))
+        if not issuer_urls_equivalent(aud, self._ps_origin):
             return self._federator.request_auth_token(
                 request.resource_token,
                 self._agent_jwt_stub,
@@ -137,7 +135,7 @@ class MemoryTokenBroker(TokenBroker):
                 code = aauth_errors.ERROR_EXPIRED_RESOURCE_TOKEN
             raise ResourceTokenRejectError(str(e), error=code) from e
 
-        if self._auto or not _resource_scope_requires_user_consent(resource_claims.get("scope")):
+        if self._auto or not self._consent_scopes.requires_consent(resource_claims.get("scope")):
             return self._issue_or_fake_federate(request, resource_claims=resource_claims)
 
         pid = self._store.create_pending(request)

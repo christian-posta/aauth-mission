@@ -31,9 +31,15 @@ from ps.service.pending_store import PendingRequestStore
 # Minimum interval between polls (seconds); below this returns 429 slow_down per spec backoff guidance.
 _MIN_POLL_INTERVAL = 0.05
 
+# Deferred 202 responses must not advertise Retry-After: 0 while the above limit applies:
+# clients (e.g. aauth.async_poll_pending_url) skip sleep when retry_after is 0 and poll
+# immediately, which violates _MIN_POLL_INTERVAL and yields 429 on the next GET.
+_DEFAULT_DEFERRED_RETRY_AFTER = 1
 
-def _pending_path(pending_id: str) -> str:
-    return f"/pending/{pending_id}"
+
+def _pending_path(pending_id: str, base_url: str) -> str:
+    """Build absolute pending URL per SPEC (agents need full URL for polling)."""
+    return f"{base_url.rstrip('/')}/pending/{pending_id}"
 
 
 # Human consent entry (browser). Loads `/ui/consent.html?code=...`; that page calls `GET /consent?code=...`.
@@ -214,8 +220,8 @@ class MemoryPendingStore(PendingRequestStore):
             show_code = rec.interaction_code
         return DeferredResponse(
             pending_id=rec.pending_id,
-            pending_url=_pending_path(rec.pending_id),
-            retry_after=0,
+            pending_url=_pending_path(rec.pending_id, self._interaction_base_url),
+            retry_after=_DEFAULT_DEFERRED_RETRY_AFTER,
             requirement=rec.requirement,
             interaction_url=interaction_url,
             code=show_code,
@@ -334,7 +340,7 @@ class MemoryPendingStore(PendingRequestStore):
                     "owner_id": rec.owner_id,
                     "code": code,
                     "interaction_url": f"{self.interaction_base_url}{CONSENT_UI_PATH}",
-                    "pending_url": _pending_path(rec.pending_id),
+                    "pending_url": _pending_path(rec.pending_id, self.interaction_base_url),
                     "justification": rec.token_request.justification if rec.token_request else None,
                     "resource_iss": vclaims.get("iss") if vclaims else None,
                     "resource_scope": vclaims.get("scope") if vclaims else None,

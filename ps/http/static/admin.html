@@ -16,13 +16,21 @@
           <h1 class="text-lg font-semibold text-white">Person Server console</h1>
           <p class="text-xs text-zinc-500">Administrator — pending requests, all missions, and agents</p>
         </div>
-        <button
-          type="button"
-          @click="signOut()"
-          class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
-        >
-          Sign out
-        </button>
+        <div class="flex gap-2">
+          <a
+            href="user.html"
+            class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+          >
+            User View
+          </a>
+          <button
+            type="button"
+            @click="signOut()"
+            class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </header>
     <main class="mx-auto max-w-6xl space-y-10 px-4 py-8">
@@ -135,6 +143,55 @@
 
       <section>
         <div>
+          <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Consent Scopes</h2>
+          <p class="mt-1 text-xs text-zinc-600">
+            Scopes that require user consent when requested by agents. When an agent requests a token with any of these scopes, the request will be deferred to the user for approval.
+          </p>
+        </div>
+        <p x-show="scopesError" class="mt-4 text-sm text-red-400" x-text="scopesError"></p>
+        <div x-show="scopesLoading" class="mt-4 text-zinc-500">Loading…</div>
+
+        <div x-show="!scopesLoading" class="mt-4 space-y-4">
+          <div class="flex gap-2">
+            <input
+              type="text"
+              x-model="newScope"
+              @keydown.enter="addScope()"
+              placeholder="e.g., write:data, admin:users"
+              class="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            />
+            <button
+              type="button"
+              @click="addScope()"
+              class="rounded-lg border border-sky-600 bg-sky-600/10 px-4 py-2 text-sm text-sky-400 hover:bg-sky-600/20"
+            >
+              Add Scope
+            </button>
+          </div>
+
+          <ul x-show="scopes.length === 0" class="text-sm text-zinc-500">No consent scopes configured.</ul>
+
+          <div x-show="scopes.length > 0" class="flex flex-wrap gap-2">
+            <template x-for="scope in scopes" :key="scope">
+              <div class="flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-800/50 px-3 py-1.5">
+                <span class="text-sm text-zinc-300" x-text="scope"></span>
+                <button
+                  type="button"
+                  @click="removeScope(scope)"
+                  class="text-zinc-500 hover:text-red-400"
+                  title="Remove scope"
+                >
+                  &times;
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+        <p x-show="scopesSuccessMsg" class="mt-2 text-xs text-emerald-400" x-text="scopesSuccessMsg"></p>
+      </section>
+
+      <section>
+        <div>
           <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-500">Agents</h2>
           <p class="mt-1 text-xs text-zinc-600">
             Agents authorized to act on behalf of this Person Server's owner. Agents enrolled with a stable key can
@@ -218,13 +275,18 @@
           missions: [],
           pending: [],
           agents: [],
+          scopes: [],
+          newScope: "",
           loading: true,
           pendingLoading: true,
           agentsLoading: true,
+          scopesLoading: true,
           error: "",
           pendingError: "",
           agentsError: "",
+          scopesError: "",
           agentsRevokeMsg: "",
+          scopesSuccessMsg: "",
           detail: null,
           detailError: "",
           stateFilter: "",
@@ -236,6 +298,7 @@
             }
             this.refreshAll();
             this.loadAgents();
+            this.loadScopes();
           },
           signOut() {
             AAuthAuth.clear();
@@ -328,6 +391,51 @@
               await this.loadAgents();
             } catch (e) {
               this.agentsError = e.message || String(e);
+            }
+          },
+          async loadScopes() {
+            this.scopesLoading = true;
+            this.scopesError = "";
+            try {
+              var data = await AAuthApi.fetchJson("/admin/consent-scopes");
+              this.scopes = data.scopes || [];
+            } catch (e) {
+              this.scopesError = e.message || String(e);
+            } finally {
+              this.scopesLoading = false;
+            }
+          },
+          async addScope() {
+            var scope = this.newScope.trim();
+            if (!scope) return;
+            this.scopesError = "";
+            this.scopesSuccessMsg = "";
+            try {
+              await AAuthApi.fetchJson("/admin/consent-scopes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ scope: scope }),
+              });
+              this.scopesSuccessMsg = "Scope '" + scope + "' added.";
+              this.newScope = "";
+              await this.loadScopes();
+              setTimeout(() => { this.scopesSuccessMsg = ""; }, 3000);
+            } catch (e) {
+              this.scopesError = e.message || String(e);
+            }
+          },
+          async removeScope(scope) {
+            this.scopesError = "";
+            this.scopesSuccessMsg = "";
+            try {
+              await AAuthApi.fetchJson("/admin/consent-scopes/" + encodeURIComponent(scope), {
+                method: "DELETE",
+              });
+              this.scopesSuccessMsg = "Scope '" + scope + "' removed.";
+              await this.loadScopes();
+              setTimeout(() => { this.scopesSuccessMsg = ""; }, 3000);
+            } catch (e) {
+              this.scopesError = e.message || String(e);
             }
           },
         };

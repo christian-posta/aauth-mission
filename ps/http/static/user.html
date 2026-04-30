@@ -16,13 +16,21 @@
           <h1 class="text-lg font-semibold text-white">Person Server console</h1>
           <p class="text-xs text-zinc-500">Legal user — your missions, consent queue, and agents</p>
         </div>
-        <button
-          type="button"
-          @click="signOut()"
-          class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
-        >
-          Sign out
-        </button>
+        <div class="flex gap-2">
+          <a
+            href="admin.html"
+            class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+          >
+            Admin
+          </a>
+          <button
+            type="button"
+            @click="signOut()"
+            class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </header>
     <main class="mx-auto max-w-6xl space-y-10 px-4 py-8">

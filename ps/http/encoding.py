@@ -57,7 +57,25 @@ def consent_context_http_dict(c: ConsentContext) -> dict[str, object]:
 
 
 def deferred_body_dict(d: DeferredResponse) -> dict[str, object]:
+    """JSON body for 202 deferred responses.
+
+    Clients such as ``aauth.agent.poller`` read ``requirement`` and ``code`` from the
+    body to drive callbacks (not only from ``AAuth-Requirement``). Omitting them
+    breaks interaction/consent flows even when headers are correct.
+    """
     body: dict[str, object] = {"status": d.status.value}
+    if d.requirement is not None:
+        body["requirement"] = d.requirement.value
+    if d.code is not None:
+        body["code"] = d.code
+    if d.interaction_url is not None:
+        body["interaction_url"] = d.interaction_url
+    if d.retry_after is not None:
+        body["retry_after"] = d.retry_after
+    if d.pending_id:
+        body["pending_id"] = d.pending_id
+    if d.pending_url:
+        body["pending_url"] = d.pending_url
     if d.clarification is not None:
         body["clarification"] = d.clarification
     if d.timeout is not None:

@@ -80,6 +80,10 @@ class PSHttpSettings(BaseSettings):
         default=None,
         description="If set, persist PS state to this SQLAlchemy URL (SQLite, PostgreSQL, etc.).",
     )
+    consent_scopes_file: str | None = Field(
+        default=".aauth/consent-scopes.json",
+        description="JSON file listing scopes that require user consent. Empty string disables persistence.",
+    )
 
     @field_validator("signing_key_path", mode="before")
     @classmethod
@@ -91,6 +95,13 @@ class PSHttpSettings(BaseSettings):
     @field_validator("trust_file", mode="before")
     @classmethod
     def _trust_file_empty(cls, v: object) -> object:
+        if v == "":
+            return None
+        return v
+
+    @field_validator("consent_scopes_file", mode="before")
+    @classmethod
+    def _consent_scopes_file_empty(cls, v: object) -> object:
         if v == "":
             return None
         return v
