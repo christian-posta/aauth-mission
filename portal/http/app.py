@@ -328,6 +328,7 @@ def create_portal_app(
             agent_token_lifetime=as_settings.agent_token_lifetime,
             registration_ttl=as_settings.registration_ttl,
             signature_window=as_settings.signature_window,
+            ps_url=ps_settings.public_origin.rstrip("/"),
         )
     else:
         ps = build_memory_ps(
@@ -351,6 +352,7 @@ def create_portal_app(
             agent_token_lifetime=as_settings.agent_token_lifetime,
             registration_ttl=as_settings.registration_ttl,
             signature_window=as_settings.signature_window,
+            ps_url=ps_settings.public_origin.rstrip("/"),
         )
     defer_as_jwks.set(container.signing.get_jwks)
 

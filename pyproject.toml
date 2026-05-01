@@ -34,3 +34,8 @@ include = ["ps*", "agent_server*", "portal*", "persistence*"]
 [build-system]
 requires = ["setuptools>=69.0"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

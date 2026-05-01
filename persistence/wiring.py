@@ -140,6 +140,7 @@ def build_persisted_as(
     agent_token_lifetime: int,
     registration_ttl: int,
     signature_window: int,
+    ps_url: str | None = None,
 ) -> ASContainer:
     signing = SigningService(
         issuer=issuer,
@@ -147,6 +148,7 @@ def build_persisted_as(
         signing_key_path=signing_key_path,
         previous_key_path=previous_key_path,
         agent_token_lifetime=agent_token_lifetime,
+        ps_url=ps_url,
     )
     token_factory = AgentTokenFactory(signing=signing)
     registrations = SQLPendingRegistrationStore(session_factory, default_ttl=registration_ttl)

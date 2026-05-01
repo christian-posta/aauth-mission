@@ -18,7 +18,7 @@ class AgentTokenFactory:
         ephemeral_pub: dict[str, Any],
         lifetime_seconds: int | None = None,
     ) -> str:
-        """Create and sign an agent token JWT. No ps claim (Path B)."""
+        """Create and sign an agent token JWT."""
         return self._signing.create_agent_token(
             agent_id=agent_id,
             ephemeral_pub=ephemeral_pub,

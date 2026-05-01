@@ -28,10 +28,12 @@ class SigningService:
         signing_key_path: str | None,
         previous_key_path: str | None,
         agent_token_lifetime: int,
+        ps_url: str | None = None,
     ) -> None:
         self._issuer = issuer
         self._server_domain = server_domain
         self._lifetime = agent_token_lifetime
+        self._ps_url = ps_url
 
         self._private_key, self._kid = self._load_or_generate(signing_key_path)
         self._previous_key: Ed25519PrivateKey | None = None
@@ -77,6 +79,7 @@ class SigningService:
             private_key=self._private_key,
             kid=self._kid,
             exp=exp,
+            ps=self._ps_url,
         )
 
     # ------------------------------------------------------------------
