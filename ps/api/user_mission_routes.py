@@ -43,11 +43,14 @@ def user_consent_queue(
     interaction_url = f"{store.interaction_base_url}{CONSENT_UI_PATH}"
     out: list[dict[str, Any]] = []
     for rec in recs:
-        agent_id = (
-            rec.token_request.agent_id
-            if rec.token_request is not None
-            else (rec.mission_proposal.agent_id if rec.mission_proposal is not None else "")
-        )
+        if rec.token_request is not None:
+            agent_id = rec.token_request.agent_id
+        elif rec.mission_proposal is not None:
+            agent_id = rec.mission_proposal.agent_id
+        elif rec.pending_agent_id is not None:
+            agent_id = rec.pending_agent_id
+        else:
+            agent_id = ""
         out.append(
             {
                 "pending_id": rec.pending_id,

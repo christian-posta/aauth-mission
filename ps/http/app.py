@@ -38,6 +38,7 @@ from ps.exceptions import (
     ClarificationLimitError,
     ForbiddenOwnerError,
     InvalidInteractionCodeError,
+    MissionDeniedError,
     MissionTerminatedError,
     NotFoundError,
     PendingDeniedError,
@@ -244,6 +245,7 @@ def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContai
             user_id=settings.user_id,
             insecure_dev=settings.insecure_dev,
             self_jwks_provider=None,
+            mission_evaluator=settings.mission_evaluator,
         )
     else:
         ps = build_memory_ps(
@@ -259,6 +261,7 @@ def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContai
             user_id=settings.user_id,
             insecure_dev=settings.insecure_dev,
             self_jwks_provider=None,
+            mission_evaluator=settings.mission_evaluator,
         )
 
     @asynccontextmanager
@@ -286,6 +289,18 @@ def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContai
         return JSONResponse(
             status_code=403,
             content={"error": "mission_terminated", "mission_status": "terminated"},
+        )
+
+    @app.exception_handler(MissionDeniedError)
+    async def mission_denied_handler(
+        _request: Request, exc: MissionDeniedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "mission_denied",
+                "error_description": exc.reason,
+            },
         )
 
     @app.exception_handler(InvalidInteractionCodeError)
@@ -459,6 +474,8 @@ def create_app(settings: PSHttpSettings | None = None, *, ps_container: PSContai
             out = ps.governance.post_permission(req)
         except NotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        if isinstance(out, DeferredResponse):
+            return _json_deferred(out)
         return {"permission": out.permission, **({"reason": out.reason} if out.reason else {})}
 
     @app.post("/audit", status_code=201)

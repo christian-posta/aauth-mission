@@ -131,6 +131,35 @@ class MemoryPendingStore(PendingRequestStore):
         self._b.code_index[code] = pending_id
         return pending_id
 
+    def create_permission_pending(
+        self,
+        *,
+        agent_id: str,
+        owner_id: str | None,
+        mission_s256: str | None,
+        action: str,
+        description: str | None = None,
+        parameters: dict[str, Any] | None = None,
+    ) -> str:
+        """Deferred user step for POST /permission outside approved_tools (Layer 2)."""
+        pending_id = secrets.token_urlsafe(12).replace("-", "")[:16]
+        code = secrets.token_urlsafe(16)
+        rec = PendingRecord(
+            pending_id=pending_id,
+            interaction_code=code,
+            kind="permission",
+            ttl_seconds=self._default_ttl_seconds,
+            owner_id=owner_id,
+            pending_agent_id=agent_id,
+            mission_s256=mission_s256,
+            permission_action=action,
+            permission_description=description,
+            permission_parameters=parameters,
+        )
+        self._b.pending[pending_id] = rec
+        self._b.code_index[code] = pending_id
+        return pending_id
+
     def _require(self, pending_id: str) -> PendingRecord:
         rec = self._b.pending.get(pending_id)
         if rec is None:

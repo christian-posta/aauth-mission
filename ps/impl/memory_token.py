@@ -11,7 +11,12 @@ from aauth import TokenError as AAuthTokenError
 
 from aauth import errors as aauth_errors
 
-from ps.exceptions import ClarificationLimitError, NotFoundError, ResourceTokenRejectError
+from ps.exceptions import (
+    ClarificationLimitError,
+    MissionDeniedError,
+    NotFoundError,
+    ResourceTokenRejectError,
+)
 from ps.federation.as_federator import ASFederator
 from ps.federation.agent_server_trust import (
     issuer_urls_equivalent,
@@ -36,12 +41,23 @@ from ps.models import (
 )
 from ps.service.auth_issuer import AuthTokenIssuer
 from ps.service.consent_scopes import ConsentScopeStore
+from ps.service.mission_evaluator import MissionEvaluator, TokenRequestSummary
 from ps.service.token_broker import TokenBroker
 from ps.federation.resource_jwks import ResourceJWKSFetcher
 
 logger = logging.getLogger(__name__)
 
 _MAX_CLARIFICATION_ROUNDS = 5
+
+
+from dataclasses import dataclass
+from typing import Literal as _Literal
+
+
+@dataclass(frozen=True, slots=True)
+class _EvaluatorOutcome:
+    kind: _Literal["allow", "clarify", "escalate"]
+    payload: Any
 
 
 class MemoryTokenBroker(TokenBroker):
@@ -58,6 +74,7 @@ class MemoryTokenBroker(TokenBroker):
         agent_jwt_stub: str,
         auto_approve_without_consent: bool = False,
         insecure_dev: bool = False,
+        evaluator: MissionEvaluator | None = None,
     ) -> None:
         self._store = store
         self._federator = federator
@@ -69,6 +86,7 @@ class MemoryTokenBroker(TokenBroker):
         self._agent_jwt_stub = agent_jwt_stub
         self._auto = auto_approve_without_consent
         self._insecure_dev = insecure_dev
+        self._evaluator = evaluator
 
     def _issue_or_fake_federate(
         self,
@@ -105,48 +123,142 @@ class MemoryTokenBroker(TokenBroker):
         if request.mission is not None:
             require_active_mission(self._m, request.mission)
 
+        # Verify the resource token in secure mode; insecure_dev keeps claims empty.
+        resource_claims: dict[str, Any] | None = None
+        if request.secure_mode:
+            try:
+                resource_claims = aauth.verify_resource_token(
+                    request.resource_token,
+                    self._resource_jwks,
+                    expected_aud=None,
+                    expected_agent=request.agent_id,
+                    expected_agent_jkt=request.agent_jkt,
+                )
+            except AAuthTokenError as e:
+                logger.info("resource token verification failed: %s", e)
+                msg = str(e).lower()
+                code = aauth_errors.ERROR_INVALID_RESOURCE_TOKEN
+                if "expired" in msg:
+                    code = aauth_errors.ERROR_EXPIRED_RESOURCE_TOKEN
+                raise ResourceTokenRejectError(str(e), error=code) from e
+
+        # Layer 1 — mission-aware evaluation. Runs whenever the request carries a
+        # mission and an evaluator is wired, in both insecure and secure modes. The
+        # evaluator's verdict overrides scope-based and ``auto`` shortcircuits below.
+        evaluator_escalation_reason: str | None = None
+        if request.mission is not None and self._evaluator is not None:
+            m = self._m.get_mission(request.mission.s256)
+            if m is not None:
+                outcome = self._apply_evaluator(request, m, resource_claims or {})
+                if outcome.kind == "allow":
+                    return outcome.payload  # type: ignore[return-value]
+                if outcome.kind == "clarify":
+                    return outcome.payload  # type: ignore[return-value]
+                evaluator_escalation_reason = outcome.payload  # type: ignore[assignment]
+
         if not request.secure_mode:
-            if self._auto:
+            if self._auto and evaluator_escalation_reason is None:
                 return self._federator.request_auth_token(
                     request.resource_token,
                     self._agent_jwt_stub,
                     request.upstream_token,
                 )
             pid = self._store.create_pending(request)
+            if evaluator_escalation_reason is not None:
+                rec = self._store.get_record(pid)
+                rec.evaluator_reason = evaluator_escalation_reason
             self._store.update_pending(pid, requirement=RequirementLevel.INTERACTION)
             val = self._store.get_pending(pid, for_poll=False)
             if isinstance(val, Mission):
                 raise NotFoundError("unexpected mission outcome on token request")
             return val
 
-        try:
-            resource_claims = aauth.verify_resource_token(
-                request.resource_token,
-                self._resource_jwks,
-                expected_aud=None,
-                expected_agent=request.agent_id,
-                expected_agent_jkt=request.agent_jkt,
-            )
-        except AAuthTokenError as e:
-            logger.info("resource token verification failed: %s", e)
-            msg = str(e).lower()
-            code = aauth_errors.ERROR_INVALID_RESOURCE_TOKEN
-            if "expired" in msg:
-                code = aauth_errors.ERROR_EXPIRED_RESOURCE_TOKEN
-            raise ResourceTokenRejectError(str(e), error=code) from e
-
-        if self._auto or not self._consent_scopes.requires_consent(resource_claims.get("scope")):
+        assert resource_claims is not None  # secure_mode is True here
+        if evaluator_escalation_reason is None and (
+            self._auto or not self._consent_scopes.requires_consent(resource_claims.get("scope"))
+        ):
             return self._issue_or_fake_federate(request, resource_claims=resource_claims)
 
         pid = self._store.create_pending(request)
         rec = self._store.get_record(pid)
         rec.verified_resource_claims = resource_claims
         rec.token_agent_cnf_jwk = request.agent_cnf_jwk
+        if evaluator_escalation_reason is not None:
+            rec.evaluator_reason = evaluator_escalation_reason
         self._store.update_pending(pid, requirement=RequirementLevel.INTERACTION)
         val = self._store.get_pending(pid, for_poll=False)
         if isinstance(val, Mission):
             raise NotFoundError("unexpected mission outcome on token request")
         return val
+
+    def _apply_evaluator(
+        self,
+        request: TokenRequest,
+        mission: Mission,
+        resource_claims: dict[str, Any],
+    ) -> "_EvaluatorOutcome":
+        """Run the evaluator, log the decision, and translate it into a control-flow shape.
+
+        Returns:
+          - ``("allow", AuthTokenResponse | DeferredResponse)`` — issued immediately, caller returns it.
+          - ``("clarify", DeferredResponse)`` — clarification pending, caller returns it.
+          - ``("escalate", reason)`` — caller falls through to consent with the reason attached.
+
+        Raises ``MissionDeniedError`` for the deny decision.
+        """
+        log = self._m.get_mission_log(mission.s256)
+        iss = resource_claims.get("iss")
+        scope = resource_claims.get("scope")
+        summary = TokenRequestSummary(
+            agent_id=request.agent_id,
+            resource_iss=str(iss) if iss else None,
+            resource_scope=str(scope) if scope else None,
+            justification=request.justification,
+            upstream_token_present=request.upstream_token is not None,
+        )
+        decision = self._evaluator.evaluate(mission, log, summary)  # type: ignore[union-attr]
+
+        self._m.append_mission_log(
+            mission.s256,
+            MissionLogEntry(
+                ts=utc_now(),
+                kind=MissionLogKind.TOKEN_REQUEST,
+                payload={
+                    "stage": "evaluator",
+                    "decision": decision.decision,
+                    "reason": decision.reason,
+                    "resource_iss": summary.resource_iss,
+                    "resource_scope": summary.resource_scope,
+                    "justification": request.justification,
+                },
+            ),
+        )
+
+        if decision.decision == "deny":
+            raise MissionDeniedError(decision.reason)
+
+        if decision.decision == "allow":
+            issued = self._issue_or_fake_federate(request, resource_claims=resource_claims)
+            return _EvaluatorOutcome(kind="allow", payload=issued)
+
+        if decision.decision == "clarify":
+            pid = self._store.create_pending(request)
+            rec = self._store.get_record(pid)
+            rec.verified_resource_claims = resource_claims
+            rec.token_agent_cnf_jwk = request.agent_cnf_jwk
+            rec.evaluator_reason = decision.reason
+            self._store.update_pending(
+                pid,
+                requirement=RequirementLevel.CLARIFICATION,
+                clarification=decision.clarification_question,
+                status=PendingStatus.PENDING,
+            )
+            out = self._store.get_pending(pid, for_poll=False)
+            if not isinstance(out, DeferredResponse):
+                raise NotFoundError("unexpected non-deferred outcome on clarify path")
+            return _EvaluatorOutcome(kind="clarify", payload=out)
+
+        return _EvaluatorOutcome(kind="escalate", payload=decision.reason)
 
     def get_pending(self, pending_id: str, agent_id: str) -> AuthTokenResponse | DeferredResponse | InteractionTerminalResult:
         self._store.assert_agent_owns_pending(pending_id, agent_id)

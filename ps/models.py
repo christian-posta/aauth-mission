@@ -156,6 +156,14 @@ class ConsentContext:
     resource_scope: str | None = None
     #: Mission hash from the resource token when present.
     resource_mission_s256: str | None = None
+    #: Action name when the user is deciding a permission request (Layer 2 — approved-tools gating).
+    permission_action: str | None = None
+    #: Agent-supplied description of the permission action.
+    permission_description: str | None = None
+    #: Agent-supplied parameters for the permission action (rendered for user review).
+    permission_parameters: dict[str, Any] | None = None
+    #: PS-evaluator guidance to show the user (Layer 1 — mission-aware decisions).
+    evaluator_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

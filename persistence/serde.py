@@ -176,6 +176,9 @@ def pending_record_to_dict(rec: PendingRecord) -> dict[str, Any]:
         "mission_s256": rec.mission_s256,
         "pending_agent_id": rec.pending_agent_id,
         "interaction_description": rec.interaction_description,
+        "permission_action": rec.permission_action,
+        "permission_description": rec.permission_description,
+        "permission_parameters": rec.permission_parameters,
         "failure": rec.failure,
         "gone": rec.gone,
         "delivered": rec.delivered,
@@ -185,6 +188,7 @@ def pending_record_to_dict(rec: PendingRecord) -> dict[str, Any]:
         "last_poll_monotonic": rec.last_poll_monotonic,
         "verified_resource_claims": rec.verified_resource_claims,
         "token_agent_cnf_jwk": rec.token_agent_cnf_jwk,
+        "evaluator_reason": rec.evaluator_reason,
     }
     return _walk_encode(d)
 
@@ -229,6 +233,9 @@ def pending_record_from_dict(data: Any) -> PendingRecord:
         mission_s256=d.get("mission_s256"),
         pending_agent_id=d.get("pending_agent_id"),
         interaction_description=d.get("interaction_description"),
+        permission_action=d.get("permission_action"),
+        permission_description=d.get("permission_description"),
+        permission_parameters=cast(Any, d.get("permission_parameters")),
         failure=d.get("failure"),
         gone=bool(d.get("gone", False)),
         delivered=bool(d.get("delivered", False)),
@@ -238,6 +245,7 @@ def pending_record_from_dict(data: Any) -> PendingRecord:
         last_poll_monotonic=d.get("last_poll_monotonic"),
         verified_resource_claims=cast(Any, d.get("verified_resource_claims")),
         token_agent_cnf_jwk=cast(Any, d.get("token_agent_cnf_jwk")),
+        evaluator_reason=d.get("evaluator_reason"),
     )
 
 

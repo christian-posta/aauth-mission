@@ -56,6 +56,17 @@ class MissionTerminatedError(Exception):
     pass
 
 
+class MissionDeniedError(Exception):
+    """PS mission evaluator (Layer 1) decided the request falls outside mission bounds.
+
+    HTTP 403 ``mission_denied``. ``reason`` carries the evaluator's explanation.
+    """
+
+    def __init__(self, reason: str = "outside mission scope") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class ResourceTokenRejectError(Exception):
     """Invalid or expired resource token on ``POST /token`` (secure mode)."""
 

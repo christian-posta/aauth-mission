@@ -100,6 +100,8 @@ class MemoryUserConsent(UserConsent):
                     break
         elif rec.kind == "interaction" and rec.mission_s256:
             mission = self._m.get_mission(rec.mission_s256)
+        elif rec.kind == "permission" and rec.mission_s256:
+            mission = self._m.get_mission(rec.mission_s256)
         elif rec.kind == "token" and rec.token_request and rec.token_request.mission:
             mission = self._m.get_mission(rec.token_request.mission.s256)
         responses = tuple(rec.clarification_responses) if rec.clarification_responses else ()
@@ -127,6 +129,20 @@ class MemoryUserConsent(UserConsent):
                 resource_scope=resource_scope,
                 resource_mission_s256=resource_mission_s256,
             )
+        if rec.kind == "permission":
+            return ConsentContext(
+                pending_id=rec.pending_id,
+                resource_name=None,
+                scopes={},
+                justification=rec.permission_description,
+                mission=mission,
+                agent_name=None,
+                clarification_responses=responses,
+                pending_kind=rec.kind,
+                permission_action=rec.permission_action,
+                permission_description=rec.permission_description,
+                permission_parameters=rec.permission_parameters,
+            )
         return ConsentContext(
             pending_id=rec.pending_id,
             resource_name=None,
@@ -139,6 +155,7 @@ class MemoryUserConsent(UserConsent):
             resource_iss=resource_iss,
             resource_scope=resource_scope,
             resource_mission_s256=resource_mission_s256,
+            evaluator_reason=rec.evaluator_reason,
         )
 
     def record_decision(self, pending_id: str, decision: UserDecision) -> DecisionResult:
@@ -152,6 +169,31 @@ class MemoryUserConsent(UserConsent):
                 status=PendingStatus.INTERACTING,
             )
             return DecisionResult(redirect_url=None)
+
+        # Permission pendings deliver granted/denied as a normal terminal body so the agent
+        # gets a 200 response either way (Layer 2 — approved-tools gating).
+        if rec.kind == "permission":
+            result = "granted" if decision.approved else "denied"
+            self._store.resolve_pending(
+                pending_id,
+                InteractionTerminalResult(body={"permission": result}),
+            )
+            if rec.mission_s256 and self._m.has_mission(rec.mission_s256):
+                self._m.append_mission_log(
+                    rec.mission_s256,
+                    MissionLogEntry(
+                        ts=utc_now(),
+                        kind=MissionLogKind.PERMISSION,
+                        payload={
+                            "action": rec.permission_action,
+                            "description": rec.permission_description,
+                            "parameters": rec.permission_parameters,
+                            "result": result,
+                            "decided_by": "user",
+                        },
+                    ),
+                )
+            return DecisionResult(redirect_url=rec.callback_url)
 
         if not decision.approved:
             self._store.fail_pending(pending_id, "denied")

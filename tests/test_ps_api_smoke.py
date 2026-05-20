@@ -312,7 +312,10 @@ def test_clarification_round_limit(client: TestClient) -> None:
 def test_permission_and_audit(client: TestClient) -> None:
     mr = client.post(
         "/mission",
-        json={"description": "Demo"},
+        json={
+            "description": "Demo",
+            "tools": [{"name": "WebSearch", "description": "Search the web"}],
+        },
         headers={"X-AAuth-Agent-Id": "a1"},
     )
     m = mr.json()

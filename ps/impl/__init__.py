@@ -18,12 +18,14 @@ from ps.impl.memory_control import MemoryMissionControl
 from ps.impl.memory_issued import MemoryIssuedTokenStore
 from ps.impl.memory_lifecycle import MemoryMissionLifecycle
 from ps.impl.memory_pending import MemoryPendingStore
+from ps.impl.keyword_evaluator import KeywordMissionEvaluator
 from ps.impl.memory_token import MemoryTokenBroker
 from ps.impl.ps_governance import PsGovernance
 from ps.service.auth_issuer import AuthTokenIssuer
 from ps.service.consent_scopes import ConsentScopeStore
 from ps.service.issued_token_store import IssuedTokenStore
 from ps.service.mission_control import MissionControl
+from ps.service.mission_evaluator import MissionEvaluator, NoopMissionEvaluator
 from ps.service.mission_lifecycle import MissionLifecycle
 from ps.service.signing import PSSigningService
 from ps.service.token_broker import TokenBroker
@@ -51,6 +53,25 @@ class PSContainer:
     consent_scopes: ConsentScopeStore
 
 
+def _build_evaluator(name: str | None) -> MissionEvaluator | None:
+    """Resolve evaluator from a settings string.
+
+    ``off`` / ``none`` / ``""`` → no Layer 1 evaluator (default behavior unchanged).
+    ``keyword`` → deterministic keyword evaluator (Layer 1 default for the demo).
+    ``noop`` → returns ``escalate`` for everything (forces consent for missions).
+    """
+    if name is None:
+        return None
+    n = name.strip().lower()
+    if n in {"", "off", "none"}:
+        return None
+    if n == "keyword":
+        return KeywordMissionEvaluator()
+    if n == "noop":
+        return NoopMissionEvaluator()
+    raise ValueError(f"unknown mission evaluator: {name!r}")
+
+
 def build_memory_ps(
     *,
     public_origin: str,
@@ -66,6 +87,7 @@ def build_memory_ps(
     insecure_dev: bool = False,
     self_jwks_provider: Callable[[], dict[str, Any]] | None = None,
     resource_jwks: ResourceJWKSFetcher | None = None,
+    mission_evaluator: str | None = None,
 ) -> PSContainer:
     """Wire in-memory stores, PS signing, trust registry, and token broker."""
     backend = PSBackend()
@@ -110,6 +132,7 @@ def build_memory_ps(
         agent_jwt_stub=agent_jwt_stub,
         auto_approve_without_consent=auto_approve_token,
         insecure_dev=insecure_dev,
+        evaluator=_build_evaluator(mission_evaluator),
     )
     consent = MemoryUserConsent(
         backend,

@@ -84,6 +84,14 @@ class PSHttpSettings(BaseSettings):
         default=".aauth/consent-scopes.json",
         description="JSON file listing scopes that require user consent. Empty string disables persistence.",
     )
+    mission_evaluator: str | None = Field(
+        default=None,
+        description=(
+            "Layer 1 mission-aware decision policy on POST /token. "
+            "One of: 'off' (default, no evaluator), 'keyword' (deterministic), 'noop' "
+            "(always escalates to consent). Only runs when a request carries an active mission."
+        ),
+    )
 
     @field_validator("signing_key_path", mode="before")
     @classmethod

@@ -101,6 +101,29 @@
             <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Interaction</h2>
             <p class="mt-1 font-mono text-sm" x-text="ctx.interaction_type"></p>
           </div>
+          <div x-show="ctx.permission_action">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Tool / Action</h2>
+            <p class="mt-1 font-mono text-sm text-amber-200" x-text="ctx.permission_action"></p>
+            <p class="mt-1 text-xs text-zinc-500">
+              This action is <span class="text-amber-300">not in the mission's pre-approved tool list</span>. Approving
+              grants it for this single call.
+            </p>
+          </div>
+          <div x-show="ctx.permission_description">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Action description</h2>
+            <p class="mt-1 whitespace-pre-wrap text-sm text-zinc-300" x-text="ctx.permission_description"></p>
+          </div>
+          <div x-show="ctx.permission_parameters">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Parameters</h2>
+            <pre
+              class="mt-1 max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300"
+              x-text="JSON.stringify(ctx.permission_parameters, null, 2)"
+            ></pre>
+          </div>
+          <div x-show="ctx.evaluator_reason">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">PS guidance</h2>
+            <p class="mt-1 whitespace-pre-wrap text-sm text-amber-200" x-text="ctx.evaluator_reason"></p>
+          </div>
           <div x-show="ctx.summary">
             <h2 class="text-xs font-medium uppercase tracking-wide text-zinc-500">Summary</h2>
             <p class="mt-1 whitespace-pre-wrap text-sm text-zinc-300" x-text="ctx.summary"></p>
@@ -172,6 +195,7 @@
             if (k === "token") return "Token";
             if (k === "mission") return "Mission";
             if (k === "interaction") return "Interaction";
+            if (k === "permission") return "Permission";
             return k || "";
           },
           httpErrorMessage(r, j) {

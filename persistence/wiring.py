@@ -55,6 +55,7 @@ def build_persisted_ps(
     insecure_dev: bool = False,
     self_jwks_provider: Any = None,
     resource_jwks: ResourceJWKSFetcher | None = None,
+    mission_evaluator: str | None = None,
 ) -> PSContainer:
     import_trust_from_file_if_empty(session_factory, trust_file)
     origin = public_origin.rstrip("/")
@@ -89,6 +90,8 @@ def build_persisted_ps(
         ps_issuer=origin,
         auto_approve_mission=auto_approve_mission,
     )
+    from ps.impl import _build_evaluator
+
     token_broker = MemoryTokenBroker(
         store,  # type: ignore[arg-type]
         federator,
@@ -100,6 +103,7 @@ def build_persisted_ps(
         agent_jwt_stub=agent_jwt_stub,
         auto_approve_without_consent=auto_approve_token,
         insecure_dev=insecure_dev,
+        evaluator=_build_evaluator(mission_evaluator),
     )
     consent = MemoryUserConsent(
         mission,

@@ -53,6 +53,14 @@ def consent_context_http_dict(c: ConsentContext) -> dict[str, object]:
         payload["resource_scope"] = c.resource_scope
     if c.resource_mission_s256 is not None:
         payload["resource_mission_s256"] = c.resource_mission_s256
+    if c.permission_action is not None:
+        payload["permission_action"] = c.permission_action
+    if c.permission_description is not None:
+        payload["permission_description"] = c.permission_description
+    if c.permission_parameters is not None:
+        payload["permission_parameters"] = c.permission_parameters
+    if c.evaluator_reason is not None:
+        payload["evaluator_reason"] = c.evaluator_reason
     return payload
 
 

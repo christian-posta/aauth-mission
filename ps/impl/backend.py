@@ -26,7 +26,7 @@ def utc_now() -> datetime:
 class PendingRecord:
     pending_id: str
     interaction_code: str
-    kind: Literal["token", "mission", "interaction"]
+    kind: Literal["token", "mission", "interaction", "permission"]
     created_at: datetime = field(default_factory=utc_now)
     ttl_seconds: int = 600
     token_request: TokenRequest | None = None
@@ -47,6 +47,10 @@ class PendingRecord:
     mission_s256: str | None = None
     pending_agent_id: str | None = None
     interaction_description: str | None = None
+    # Agent-facing permission pending (POST /permission with mission, action outside approved_tools)
+    permission_action: str | None = None
+    permission_description: str | None = None
+    permission_parameters: dict[str, Any] | None = None
     failure: str | None = None
     gone: bool = False
     delivered: bool = False
@@ -58,6 +62,8 @@ class PendingRecord:
     verified_resource_claims: dict[str, Any] | None = None
     #: Ephemeral public JWK bound in the agent token (secure ``POST /token``).
     token_agent_cnf_jwk: dict[str, Any] | None = None
+    #: PS-evaluator reason attached to a deferred decision (Layer 1).
+    evaluator_reason: str | None = None
 
 
 @dataclass
